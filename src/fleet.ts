@@ -34,6 +34,8 @@ export interface FleetState {
   machines: MachineView[]
   defaultMachineId: string | null
   threads: PinnedThread[]
+  /** Open threads that are not pinned, newest first, across every machine. */
+  others: PinnedThread[]
   settings: NewThreadSettings
   notice: string | null
 }
@@ -48,7 +50,7 @@ const DEMO_KEY = 't3g2.demo'
 
 /** Every paired T3 server, merged into one pinned list, plus the defaults for starting new threads. */
 export class Fleet {
-  state: FleetState = { phase: 'loading', machines: [], defaultMachineId: null, threads: [], settings: DEFAULT_SETTINGS, notice: null }
+  state: FleetState = { phase: 'loading', machines: [], defaultMachineId: null, threads: [], others: [], settings: DEFAULT_SETTINGS, notice: null }
   private machines = new Map<string, Machine>()
   private listeners = new Set<Listener>()
   private openHandler: OpenHandler | null = null
@@ -221,10 +223,12 @@ export class Fleet {
       this.flush = undefined
       const machines = [...this.machines.values()]
       const threads = askingFirst(machines.flatMap(m => m.pinned()))
+      const others = machines.flatMap(m => m.others()).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       this.state = {
         ...this.state,
         phase: this.state.phase === 'loading' && !immediate ? 'loading' : machines.length ? 'ready' : 'unpaired',
         threads,
+        others,
         machines: machines.map(m => ({
           id: m.id, label: m.record.label, host: new URL(m.session.origin).host, link: m.link, error: m.error,
           canOperate: canOperate(m.session), threadCount: m.pinned().length,

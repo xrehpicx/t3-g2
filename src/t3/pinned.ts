@@ -20,9 +20,15 @@ export const isSnoozed = (t: Pick<ThreadShell, 'snoozedUntil'>, now = Date.now()
  * Shown on the glasses: pinned and not settled, snoozed, archived or deleted (T3's rules: settled is
  * `settledOverride === 'settled'`, snoozed is `snoozedUntil` in the future). Subagent children never show.
  */
-export const isGlassesThread = (t: ThreadShell, now = Date.now()) =>
-  Boolean(t.pinnedAt) && t.settledOverride !== 'settled' && !isSnoozed(t, now) &&
+export const isGlassesThread = (t: ThreadShell, now = Date.now()) => Boolean(t.pinnedAt) && isOpenThread(t, now)
+
+/** Not settled, snoozed, archived or deleted, and not a subagent's: a thread you would actually pick up. */
+export const isOpenThread = (t: ThreadShell, now = Date.now()) =>
+  t.settledOverride !== 'settled' && !isSnoozed(t, now) &&
   !t.archivedAt && !t.deletedAt && t.lineage.relationshipToParent !== 'subagent'
+
+/** The rest of your chats: open threads that are not pinned. */
+export const isOtherThread = (t: ThreadShell, now = Date.now()) => !t.pinnedAt && isOpenThread(t, now)
 
 /** Same ordering as the T3 sidebar's pinned block: keyed threads first, then newest-created. */
 function byPinOrder(a: ThreadShell, b: ThreadShell): number {

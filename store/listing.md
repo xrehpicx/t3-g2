@@ -23,6 +23,7 @@ Keep your coding agents moving from your glasses.
 
 T3 Code G2 shows the threads you have pinned in T3 Code, live: which agents are working and for how long, what each one is doing right now, and their replies as they stream in. Hold the touchpad to send a voice message, or start a longer hands-free recording from the menu. It steers the running agent, and the agent transcribes your audio on your own machine.
 
+- Your other, unpinned chats in a separate section below the pinned ones; threads that need you or have a new reply float to the top
 - Pinned threads with live status: running with a timer, waiting for you, new reply, done, failed
 - Read a thread with the newest messages at the bottom; scroll back and it stops following until you tap
 - Answer an agent's questions and approve its commands, by tapping an option or saying your answer

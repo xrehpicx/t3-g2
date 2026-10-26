@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAFETY_PX, textWidth } from './font'
 import {
-  alignRight, CLOCK_W, listDetail, titleWithDetail, formatClock, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
+  alignRight, attentionFirst, SEP_KEY, CLOCK_W, listDetail, titleWithDetail, formatClock, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
   MAX_MESSAGES, NEW_ROW, rowY, scrollbar, spinner, levelGlyph, TEXT_W, threadRow, titleBadge,
 } from './screens'
 import type { PinnedThread, ThreadMessage } from '../t3/types'
@@ -300,5 +300,26 @@ describe('list details', () => {
   it('lets a long title keep most of the line', () => {
     const line = titleWithDetail('x'.repeat(120), 'detail text here', 400)
     expect(textWidth(line.split(' · ')[0])).toBeGreaterThanOrEqual(400 * 0.5)
+  })
+})
+
+describe('ordering and the other-chats section', () => {
+  const named = (id: string, over: Partial<PinnedThread> = {}) => thread({ id, title: id, status: 'completed', ...over })
+  it('puts threads that need you first, then new replies, then the rest, keeping order within each', () => {
+    const list = [named('a'), named('b'), named('c', { needsInput: true }), named('d'), named('e', { status: 'running' })]
+    const unread = (t: PinnedThread) => t.id === 'b' || t.id === 'e' // a running thread's updates are not "new"
+    expect(attentionFirst(list, unread).map(t => t.id)).toEqual(['c', 'b', 'a', 'd', 'e'])
+  })
+  it('puts a divider before the threads that are not pinned, once they are loaded', () => {
+    const list = ['a', 'b', 'c', 'd'].map(id => named(id))
+    const keys = (loaded: number) => buildRows(list, () => false, NOW, undefined, loaded, 2).map(r => r.key.split(':').pop())
+    expect(keys(10)).toEqual(['new', 'a', 'b', SEP_KEY, 'c', 'd'])
+    expect(keys(2)).toEqual(['new', 'a', 'b']) // not reached yet
+    expect(buildRows(list, () => false, NOW)).toHaveLength(5) // no split given: no divider
+  })
+  it('draws the divider as a label with no mark', () => {
+    const rows = buildRows(['a', 'b'].map(id => named(id)), () => false, NOW, undefined, 10, 1)
+    const { dim } = listLayers(rows, 0, 0, 500)
+    expect(dim.split('\n')[2]).toBe('── Other chats ──')
   })
 })

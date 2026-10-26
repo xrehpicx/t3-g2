@@ -2,7 +2,7 @@ import type { Net } from '../net'
 import { applyEvent, currentStep, fromSnapshot as liveFromSnapshot, type ThreadEvent, type ThreadLive } from './activity'
 import { AuthError, fetchThread } from './http'
 import { launchThread, type LaunchInput } from './launch'
-import { isBusy, isGlassesThread, toPinned } from './pinned'
+import { isBusy, isGlassesThread, isOtherThread, toPinned } from './pinned'
 import { rpc, warmRpc } from './rpc'
 import { parseServerConfig, type ServerConfig } from './serverConfig'
 import { respondToRequest, sendTextMessage, sendVoiceMessage, type RequestResponse } from './send'
@@ -168,6 +168,15 @@ export class Machine {
     if (!live) return undefined
     const reply = live.messages.findLast(m => m.role === 'assistant' && m.text.trim())
     return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null }
+  }
+
+  /** Open threads that are not pinned, most recently changed first. */
+  others(): PinnedThread[] {
+    const projects = new Map([...this.shell.projects.values()].map(p => [p.id, p.title]))
+    return [...this.shell.threads.values()]
+      .filter(t => isOtherThread(t))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.id.localeCompare(b.id))
+      .map(t => toPinned(t, projects, { id: this.id, label: this.record.label }))
   }
 
   /** Any thread this server knows, pinned or not (used right after starting a new one). */

@@ -139,6 +139,22 @@ export class DemoMachine extends Machine {
       ],
       steps: [],
     })
+    const unpinned = { pinnedAt: null, pinOrderKey: null }
+    add({
+      shell: thread('o1', 'Spike: cache product pages at the edge', 'completed', 'web', 3 * 60 * MIN, unpinned),
+      messages: [message('user', 'How much would edge caching help the product pages?', 4 * 60 * MIN), message('assistant', 'About 60% of requests are cacheable. A 5 minute TTL would cut origin load by half.', 3 * 60 * MIN)],
+      steps: [],
+    })
+    add({
+      shell: thread('o2', 'Bump Node to 24', 'completed', 'api', 2 * 24 * 60 * MIN, unpinned),
+      messages: [message('user', 'Upgrade the API to Node 24.', 2 * 24 * 60 * MIN), message('assistant', 'Done. Tests pass and the Docker image is rebuilt.', 2 * 24 * 60 * MIN)],
+      steps: [],
+    })
+    add({
+      shell: thread('o3', 'Rename the checkout module', 'completed', 'web', 3 * 24 * 60 * MIN, unpinned),
+      messages: [message('user', 'Rename checkout to purchase everywhere.', 3 * 24 * 60 * MIN), message('assistant', 'Renamed in 41 files.', 3 * 24 * 60 * MIN)],
+      steps: [],
+    })
     this.publish()
   }
 

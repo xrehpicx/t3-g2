@@ -80,7 +80,7 @@ export function alignRight(text: string, widthPx: number): string {
 
 export interface ListRow {
   key: string
-  mark: Mark | 'add'
+  mark: Mark | 'add' | 'sep'
   title: string
   /** Right column: run timer, or how long ago it changed. */
   side: string
@@ -105,6 +105,19 @@ export function listDetail(fields: readonly ListField[], t: PinnedThread, glance
   return parts.filter(Boolean).join(' · ')
 }
 
+/** The divider before the threads that are not pinned. Not selectable. */
+export const SEP_KEY = 'sep'
+export const SEP_ROW: ListRow = { key: SEP_KEY, mark: 'sep', title: '── Other chats ──', side: '', detail: '' }
+
+/** Threads waiting on you first, then ones with a new reply, then the rest. Each group keeps its order. */
+export function attentionFirst(threads: PinnedThread[], unread: (t: PinnedThread) => boolean): PinnedThread[] {
+  const rank = (t: PinnedThread) => {
+    const mark = markFor(t.status, t.needsInput, unread(t))
+    return mark === 'ask' ? 0 : mark === 'new' ? 1 : 2
+  }
+  return threads.map((t, i) => ({ t, i, r: rank(t) })).sort((a, b) => a.r - b.r || a.i - b.i).map(x => x.t)
+}
+
 export const NEW_ROW: ListRow = { key: 'new', mark: 'add', title: 'New thread', side: '', detail: '' }
 
 /** The glasses list loads this many threads at a time, and the next batch as you reach the end. */
@@ -117,8 +130,11 @@ export function buildRows(
   now: number,
   detail: (t: PinnedThread) => string = () => '',
   loaded: number = PAGE_SIZE,
+  /** Threads from this index on are not pinned; a divider goes before the first one that is loaded. */
+  split: number = threads.length,
 ): ListRow[] {
-  return [NEW_ROW, ...threads.slice(0, loaded).map(t => threadRow(t, unread(t), now, detail(t)))]
+  const rows = threads.slice(0, loaded).map(t => threadRow(t, unread(t), now, detail(t)))
+  return [NEW_ROW, ...(rows.length > split ? [...rows.slice(0, split), SEP_ROW, ...rows.slice(split)] : rows)]
 }
 
 /** How many threads to have loaded once the cursor is on row `cursor` (row 0 is `+ New thread`). */
@@ -152,7 +168,7 @@ export function titleWithDetail(title: string, detail: string, room: number): st
 export function listLayers(rows: ListRow[], cursor: number, start: number, widthPx: number, visibleRows = LIST_ROWS) {
   const shown = rows.slice(start, start + visibleRows)
   const lines = shown.map(row => {
-    const prefix = `${row.mark === 'add' ? '+' : MARK[row.mark]} `
+    const prefix = row.mark === 'sep' ? '' : `${row.mark === 'add' ? '+' : MARK[row.mark]} `
     const side = row.side ? `  ${row.side}` : ''
     const room = widthPx - textWidth(prefix) - textWidth(side) - 6
     const left = prefix + titleWithDetail(row.title, row.detail, room)

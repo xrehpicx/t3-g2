@@ -19,7 +19,7 @@ import { fitWidth } from './font'
 import {
   alignRight, BAR_W, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
   listHeader, listStart, levelGlyph, markFor, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
-  buildRows, CLOCK_W, formatClock, listDetail, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, type ListRow,
+  attentionFirst, buildRows, CLOCK_W, formatClock, listDetail, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, SEP_KEY, type ListRow,
   approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
@@ -77,7 +77,8 @@ export class GlassesController {
   private layout = ''
   private sent = new Map<Slot, string>()
   private bright = new Map<Slot, number>()
-  private threads: PinnedThread[] = []
+  private pinnedList: PinnedThread[] = []
+  private otherList: PinnedThread[] = []
   private current: PinnedThread | null = null
   private live: ThreadLive = emptyLive()
   private openThread: OpenThread | null = null
@@ -139,7 +140,8 @@ export class GlassesController {
       this.screen = 'status'
       return this.showMessage('T3 Code', 'Not connected.\n\nOpen this app on your phone\nand pair it with your T3 Code machine.\n\nTap to try the demo.')
     }
-    this.threads = state.threads
+    this.pinnedList = state.threads
+    this.otherList = state.others
     this.markFirstSeen()
     if (this.screen === 'thread' && this.current) {
       const fresh = this.machineOf(this.current)?.thread(this.current.id)
@@ -162,10 +164,15 @@ export class GlassesController {
 
   private markFirstSeen() {
     let changed = false
-    for (const thread of this.threads) {
+    for (const thread of [...this.pinnedList, ...this.otherList]) {
       if (!(keyOf(thread) in this.seen)) { this.seen[keyOf(thread)] = thread.updatedAt; changed = true }
     }
     if (changed) void this.store.set(SEEN_KEY, JSON.stringify(this.seen))
+  }
+
+  /** Pinned threads, then the rest, each with what needs you and what is new on top. */
+  private get threads(): PinnedThread[] {
+    return [...attentionFirst(this.pinnedList, this.unread), ...attentionFirst(this.otherList, this.unread)]
   }
 
   private unread = (thread: PinnedThread) => thread.updatedAt > (this.seen[keyOf(thread)] ?? '')
@@ -273,7 +280,7 @@ export class GlassesController {
     const { listFields } = this.fleet.state.settings
     const several = this.fleet.state.machines.length > 1
     const detail = (t: PinnedThread) => listDetail(listFields, t, this.machineOf(t)?.glance(t.id), several)
-    return buildRows(this.threads, this.unread, Date.now(), detail, this.loaded)
+    return buildRows(this.threads, this.unread, Date.now(), detail, this.loaded, this.pinnedList.length)
   }
 
   /** Tells each machine which threads the list is showing, so it can follow what they are doing. */
@@ -298,10 +305,10 @@ export class GlassesController {
     const rows = this.rows()
     const cursor = this.cursor(rows)
     this.listTop = listStart(rows.length, cursor, this.listTop)
-    const bar = scrollbar(this.threads.length + 1, this.listTop, LIST_ROWS)
+    const bar = scrollbar(this.threads.length + 1 + (this.otherList.length ? 1 : 0), this.listTop, LIST_ROWS)
     const width = FULL_W - (bar.thumb ? BAR_W + 4 : 0)
     const { dim, bright } = listLayers(rows, cursor, this.listTop, width)
-    const header = listHeader(this.threads, this.fleet.state.machines.map(m => ({ label: m.label, connected: m.link === 'live' })))
+    const header = listHeader(this.pinnedList, this.fleet.state.machines.map(m => ({ label: m.label, connected: m.link === 'live' })))
     const time = this.clockBox()
     const edge = FULL_W - time.w // where the header's right-hand text must end
     return this.draw(`list:${bar.thumb ? 'bar' : 'nobar'}:${time.w}`, [
@@ -324,10 +331,13 @@ export class GlassesController {
 
   private moveCursor(delta: number) {
     const rows = this.rows()
-    const next = Math.max(0, Math.min(rows.length - 1, this.cursor(rows) + delta))
+    let next = Math.max(0, Math.min(rows.length - 1, this.cursor(rows) + delta))
+    if (rows[next].key === SEP_KEY) next += delta // the divider is a label, not a choice
+    next = Math.max(0, Math.min(rows.length - 1, next))
     this.cursorKey = rows[next].key
     // Reached the last loaded thread: load the next page, so there is always more below.
-    this.loaded = loadedFor(this.loaded, next, this.threads.length)
+    const sepAbove = rows.some((r, i) => r.key === SEP_KEY && i < next)
+    this.loaded = loadedFor(this.loaded, next - (sepAbove ? 1 : 0), this.threads.length)
     void this.renderList()
   }
 
