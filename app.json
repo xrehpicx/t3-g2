@@ -2,7 +2,7 @@
   "package_id": "how.raj.t3g2",
   "edition": "202601",
   "name": "T3 G2",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "min_sdk_version": "0.0.16",
   "entrypoint": "index.html",
   "permissions": [

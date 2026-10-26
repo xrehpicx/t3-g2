@@ -33,7 +33,7 @@ const ROWS_TOTAL = 10
 
 /** Container ids/names are shared across screens; each screen uses a subset. */
 const C = {
-  head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'], prompt: [8, 'prompt'],
+  head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'], prompt: [8, 'prompt'], thumb: [9, 'thumb'],
 } as const
 type Slot = keyof typeof C
 
@@ -79,6 +79,7 @@ export class GlassesController {
   private renderTimer: ReturnType<typeof setTimeout> | undefined
   private seen: Record<string, string> = {}
   private rendering: Promise<void> = Promise.resolve()
+  private latest: { layout: string; boxes: Box[] } | null = null
   private cursorKey = 'new'
   private listTop = 0
   private tick = 0
@@ -163,8 +164,15 @@ export class GlassesController {
    * Draws a screen. The first draw of a layout rebuilds the page; later draws with the same layout only
    * push the containers whose text or brightness changed, which is flicker-free and cheap over BLE.
    */
-  private draw(layout: string, boxes: Box[]): Promise<void> {
+  private draw(nextLayout: string, nextBoxes: Box[]): Promise<void> {
+    // Only the newest frame matters: a frame queued behind a slow BLE update is dropped rather than
+    // painted late over a newer screen.
+    this.latest = { layout: nextLayout, boxes: nextBoxes }
     this.rendering = this.rendering.catch(() => {}).then(async () => {
+      const frame = this.latest
+      if (!frame) return
+      this.latest = null
+      const { layout, boxes } = frame
       if (layout === this.layout && this.created) {
         for (const box of boxes) {
           const text = box.text || ' '
@@ -211,6 +219,14 @@ export class GlassesController {
     return this.rendering
   }
 
+  /** Dim track and bright thumb, overlaid. */
+  private barBoxes(bar: { track: string; thumb: string }, y: number, h: number): Box[] {
+    return [
+      { slot: 'bar', x: FULL_W - BAR_W, y, w: BAR_W, h, text: bar.track, brightness: 1 },
+      { slot: 'thumb', x: FULL_W - BAR_W, y, w: BAR_W, h, text: bar.thumb, brightness: BRIGHT },
+    ]
+  }
+
   private showMessage(title: string, body: string) {
     return this.draw(`message:${title}:${body}`, [
       { slot: 'head', x: 0, y: rowY(0), w: FULL_W, h: rowsH(1), text: title, brightness: BRIGHT },
@@ -248,14 +264,14 @@ export class GlassesController {
     const cursor = this.cursor(rows)
     this.listTop = listStart(rows.length, cursor, this.listTop)
     const bar = scrollbar(rows.length, this.listTop, LIST_ROWS)
-    const width = FULL_W - (bar ? BAR_W + 4 : 0)
+    const width = FULL_W - (bar.thumb ? BAR_W + 4 : 0)
     const { dim, bright } = listLayers(rows, cursor, this.listTop, width)
-    return this.draw(`list:${bar ? 'bar' : 'nobar'}`, [
+    return this.draw(`list:${bar.thumb ? 'bar' : 'nobar'}`, [
       { slot: 'head', x: 0, y: rowY(0), w: FULL_W, h: rowsH(1), text: listHeader(this.threads, this.fleet.state.machines.length), brightness: BRIGHT },
       // Two layers at the same position: the selected row is bright, the rest dim.
       { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: dim, brightness: 1 },
       { slot: 'selected', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: bright, brightness: BRIGHT },
-      ...(bar ? [{ slot: 'bar' as const, x: FULL_W - BAR_W, y: rowY(1), w: BAR_W, h: rowsH(LIST_ROWS), text: bar, brightness: DIM }] : []),
+      ...(bar.thumb ? this.barBoxes(bar, rowY(1), rowsH(LIST_ROWS)) : []),
     ])
   }
 
@@ -368,7 +384,7 @@ export class GlassesController {
       { slot: 'side', x: FULL_W - TITLE_SIDE_W, y: rowY(0), w: TITLE_SIDE_W, h: rowsH(1), text: badge, brightness: mark === 'run' || mark === 'ask' ? BRIGHT : DIM },
       // Chat sits between the title and the live line, so the newest activity is at the bottom, under the newest message.
       { slot: 'body', x: 0, y: rowY(1), w: TEXT_W, h: rowsH(rows), text: loading ? 'Loading…' : bottomAnchor(view.lines, rows) || 'No messages yet.', brightness: MID },
-      { slot: 'bar', x: FULL_W - BAR_W, y: rowY(1), w: BAR_W, h: rowsH(rows), text: bar, brightness: DIM },
+      ...this.barBoxes(bar, rowY(1), rowsH(rows)),
       { slot: 'status', x: 0, y: rowY(1 + rows), w: FULL_W, h: rowsH(1), text: fitWidth(status.text, FULL_W - 4), brightness: status.brightness },
     ])
   }

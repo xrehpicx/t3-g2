@@ -129,13 +129,21 @@ export function listHeader(threads: PinnedThread[], machines: number): string {
   return parts.join('   ')
 }
 
-/** Scroll position of the list as a proportional bar, one glyph per row. */
-export function scrollbar(total: number, start: number, visibleRows: number): string {
-  if (total <= visibleRows) return ''
-  const thumb = Math.max(1, Math.round((visibleRows / total) * visibleRows))
+/**
+ * A scrollbar as two layers drawn in the same place: a dim `│` track on every row, and the same thin
+ * glyph bright where the thumb is. Brightness, not a block glyph, marks the position. Empty when
+ * everything fits.
+ */
+export function scrollbar(total: number, start: number, visibleRows: number): { track: string; thumb: string } {
+  if (total <= visibleRows) return { track: '', thumb: '' }
+  const size = Math.max(1, Math.round((visibleRows / total) * visibleRows))
   const maxStart = total - visibleRows
-  const top = Math.round((start / maxStart) * (visibleRows - thumb))
-  return Array.from({ length: visibleRows }, (_, i) => (i >= top && i < top + thumb ? '█' : '│')).join('\n')
+  const top = Math.round((Math.min(start, maxStart) / maxStart) * (visibleRows - size))
+  const rows = Array.from({ length: visibleRows }, (_, i) => i >= top && i < top + size)
+  return {
+    track: rows.map(on => (on ? '' : '│')).join('\n'),
+    thumb: rows.map(on => (on ? '┃' : '')).join('\n'),
+  }
 }
 
 // --- thread ----------------------------------------------------------------------------------
@@ -200,11 +208,9 @@ export function chatLines(
   return lines
 }
 
-/** Thread scrollbar: track `│` with a `█` thumb sized to the visible share. Empty when it all fits. */
-export function chatBar(total: number, rows: number, fromBottom: number): string {
-  if (total <= rows) return ''
-  const maxOffset = total - rows
-  return scrollbar(total, maxOffset - fromBottom, rows)
+/** Thread scrollbar, measured from the bottom because the chat follows the newest line. */
+export function chatBar(total: number, rows: number, fromBottom: number) {
+  return scrollbar(total, Math.max(0, total - rows - fromBottom), rows)
 }
 
 export function titleBadge(mark: Mark, runMs: number | null): string {

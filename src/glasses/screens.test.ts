@@ -72,17 +72,20 @@ describe('list', () => {
 
 describe('scrollbar', () => {
   it('is empty when everything fits', () => {
-    expect(scrollbar(5, 0, 9)).toBe('')
+    expect(scrollbar(5, 0, 9)).toEqual({ track: '', thumb: '' })
   })
-  it('sizes and positions the thumb', () => {
-    expect(scrollbar(18, 0, 9).split('\n').slice(0, 5)).toEqual(['█', '█', '█', '█', '█'])
-    expect(scrollbar(18, 9, 9).split('\n').at(-1)).toBe('█')
-    expect(scrollbar(18, 9, 9).split('\n')[0]).toBe('│')
+  it('puts the bright thumb where the view is, and the dim track everywhere else', () => {
+    const top = scrollbar(18, 0, 9)
+    expect(top.thumb.split('\n').slice(0, 5)).toEqual(['┃', '┃', '┃', '┃', '┃'])
+    expect(top.track.split('\n').slice(0, 6)).toEqual(['', '', '', '', '', '│'])
+    const bottom = scrollbar(18, 9, 9)
+    expect(bottom.thumb.split('\n').at(-1)).toBe('┃')
+    expect(bottom.track.split('\n')[0]).toBe('│')
   })
-  it('puts the thumb at the bottom when the chat follows the latest', () => {
-    const bar = chatBar(40, 8, 0).split('\n')
-    expect(bar.at(-1)).toBe('█')
-    expect(bar[0]).toBe('│')
+  it('sits at the bottom while the chat follows the latest', () => {
+    const bar = chatBar(40, 8, 0)
+    expect(bar.thumb.split('\n').at(-1)).toBe('┃')
+    expect(bar.track.split('\n')[0]).toBe('│')
   })
 })
 

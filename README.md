@@ -4,9 +4,9 @@ Your pinned [T3 Code](https://github.com/pingdotgg/t3code) threads on Even Reali
 
 It runs as an Even Hub app on your phone and talks straight to your own T3 server, paired the same way as T3's mobile app. No bridge, no cloud service, no transcription service: the agent transcribes your audio on your machine.
 
-| Pinned threads | A thread, live |
-|---|---|
-| ![Pinned threads](assets/screenshots/list.png) | ![A running thread](assets/screenshots/thread.png) |
+| Pinned threads | A thread, live | Answering a question |
+|---|---|---|
+| ![Pinned threads](assets/screenshots/list.png) | ![A running thread](assets/screenshots/thread.png) | ![A question](assets/screenshots/question.png) |
 
 ## On the glasses
 
