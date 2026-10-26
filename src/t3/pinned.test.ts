@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pinnedThreads } from './pinned'
+import { askingFirst, pinnedThreads } from './pinned'
 import type { ShellSnapshot, ThreadShell } from './types'
 
 const t = (id: string, over: Partial<ThreadShell> = {}): ThreadShell => ({
@@ -51,5 +51,18 @@ describe('snoozed', () => {
     const past = new Date(Date.now() - 60_000).toISOString()
     const out = pinnedThreads(snap([t('snoozed', { snoozedUntil: future }), t('woke', { snoozedUntil: past }), t('plain')]))
     expect(out.map(x => x.id).sort()).toEqual(['plain', 'woke'])
+  })
+})
+
+describe('askingFirst', () => {
+  const th = (id: string, over: { needsInput?: boolean; status?: string } = {}) => ({ id, needsInput: false, status: 'idle', ...over }) as never as { id: string; needsInput: boolean; status: never }
+  it('moves threads waiting on you above the rest, keeping order inside each group', () => {
+    const out = askingFirst([th('a'), th('b', { needsInput: true }), th('c'), th('d', { status: 'waiting' }), th('e')])
+    expect(out.map(x => x.id)).toEqual(['b', 'd', 'a', 'c', 'e'])
+  })
+  it('does not drop or add threads, and leaves a list with nothing asking alone', () => {
+    const list = [th('a'), th('b')]
+    expect(askingFirst(list).map(x => x.id)).toEqual(['a', 'b'])
+    expect(askingFirst([])).toEqual([])
   })
 })

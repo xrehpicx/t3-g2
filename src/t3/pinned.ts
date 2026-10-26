@@ -55,3 +55,11 @@ export function toPinned(t: ThreadShell, projects: Map<string, string>, machine:
       runStartedAt: isBusy(effectiveStatus(t)) ? t.activityRunStartedAt ?? null : null,
   }
 }
+
+/** True when the thread is waiting on you: a question, an approval, or a status of `waiting`. */
+export const isAsking = (t: Pick<PinnedThread, 'needsInput' | 'status'>) => t.needsInput || t.status === 'waiting'
+
+/** Threads that are waiting on you first, then the rest. Both groups keep their pin order. */
+export function askingFirst<T extends Pick<PinnedThread, 'needsInput' | 'status'>>(threads: T[]): T[] {
+  return [...threads.filter(isAsking), ...threads.filter(t => !isAsking(t))]
+}

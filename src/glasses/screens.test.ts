@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { textWidth } from './font'
+import { SAFETY_PX, textWidth } from './font'
 import {
   alignRight, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
   MAX_MESSAGES, NEW_ROW, rowY, scrollbar, spinner, levelGlyph, TEXT_W, threadRow, titleBadge,
@@ -56,8 +56,8 @@ describe('list', () => {
   it('right-aligns the side column', () => {
     const padded = alignRight('12h', 80)
     expect(padded.trimStart()).toBe('12h')
-    expect(textWidth(padded)).toBeLessThanOrEqual(80)
-    expect(textWidth(padded)).toBeGreaterThan(80 - 6)
+    expect(textWidth(padded)).toBeLessThanOrEqual(80 - SAFETY_PX)
+    expect(textWidth(padded)).toBeGreaterThan(80 - SAFETY_PX - 6)
   })
   it('scrolls the window minimally to keep the cursor visible', () => {
     expect(listStart(20, 0, 0, 9)).toBe(0)
@@ -65,8 +65,23 @@ describe('list', () => {
     expect(listStart(20, 5, 4, 9)).toBe(4)
     expect(listStart(20, 2, 4, 9)).toBe(2)
   })
+  it('reads what needs you first, then what is running, and says so when it is quiet', () => {
+    const mac = [{ label: 'MacBook Pro', connected: true }]
+    expect(listHeader([thread({ needsInput: true }), thread({ needsInput: true })], mac).left).toBe('★ 2 need you')
+    expect(listHeader([thread()], mac).left).toBe('All quiet')
+    expect(listHeader([], mac).left).toBe('Nothing pinned')
+  })
+  it('names the machine on the right, and says when some are offline', () => {
+    expect(listHeader([], [{ label: 'MacBook Pro', connected: true }]).right).toBe('● MacBook Pro')
+    expect(listHeader([], [{ label: 'MacBook Pro', connected: false }]).right).toBe('○ MacBook Pro')
+    const two = [{ label: 'a', connected: true }, { label: 'b', connected: true }]
+    expect(listHeader([], two).right).toBe('● 2 machines')
+    expect(listHeader([], [two[0], { label: 'b', connected: false }]).right).toBe('○ 1 of 2 online')
+    expect(listHeader([], []).right).toBe('')
+  })
   it('summarises with symbols', () => {
-    expect(listHeader([thread({ status: 'running' }), thread({ needsInput: true }), thread()], 1)).toBe('PINNED 3   ▶ 1   ★ 1')
+    const mac = [{ label: 'MacBook Pro', connected: true }]
+    expect(listHeader([thread({ status: 'running' }), thread({ needsInput: true }), thread()], mac).left).toBe('★ 1 needs you   ▶ 1 running')
   })
 })
 
@@ -143,7 +158,9 @@ describe('live indicators', () => {
   })
 })
 
-import { approvalView, buildRows, choiceLayers, DONE_KEY, LESS_KEY, MORE_KEY, questionView } from './screens'
+import { DEFAULT_VOICE_PROMPT } from '../config'
+import { voiceText } from '../settings'
+import { approvalView, buildRows, choiceLayers, DONE_KEY, loadedFor, PAGE_SIZE, questionView } from './screens'
 
 describe('answer screens', () => {
   const q = { header: 'Library', question: 'Which charting library should we use?', options: [{ label: 'Recharts', description: '98 kB' }, { label: 'Visx' }] }
@@ -177,26 +194,63 @@ describe('answer screens', () => {
 })
 
 describe('buildRows', () => {
-  const many = Array.from({ length: 8 }, (_, i) => thread({ id: `t${i}`, title: `Thread ${i}` }))
+  const many = Array.from({ length: 25 }, (_, i) => thread({ id: `t${i}`, title: `Thread ${i}` }))
   const none = () => false
-  it('shows everything when it is short, with no Show more row', () => {
-    const rows = buildRows(many.slice(0, 5), none, NOW, false, false)
-    expect(rows.map(r => r.key)).toEqual(['new', 'm:t0', 'm:t1', 'm:t2', 'm:t3', 'm:t4'])
+  it('starts with + New thread and the first ten threads', () => {
+    const rows = buildRows(many, none, NOW, false)
+    expect(rows).toHaveLength(1 + PAGE_SIZE)
+    expect(rows[0].key).toBe('new')
+    expect(rows.at(-1)?.key).toBe('m:t9')
   })
-  it('starts with five threads and a Show more row that counts the rest', () => {
-    const rows = buildRows(many, none, NOW, false, false)
-    expect(rows).toHaveLength(1 + 5 + 1)
-    expect(rows.at(-1)).toMatchObject({ key: MORE_KEY, mark: 'more', title: 'Show 3 more' })
+  it('shows everything when there are fewer than a page', () => {
+    expect(buildRows(many.slice(0, 4), none, NOW, false)).toHaveLength(5)
   })
-  it('expands to all of them with a Show less row at the end', () => {
-    const rows = buildRows(many, none, NOW, false, true)
-    expect(rows).toHaveLength(1 + 8 + 1)
-    expect(rows.at(-1)).toMatchObject({ key: LESS_KEY, mark: 'less', title: 'Show less' })
-    expect(rows[8].key).toBe('m:t7')
+  it('has no show more row: more threads just load as you scroll', () => {
+    expect(buildRows(many, none, NOW, false).some(r => /more|less/i.test(r.title))).toBe(false)
+    expect(buildRows(many, none, NOW, false, 20)).toHaveLength(21)
   })
-  it('draws the toggle rows with arrows', () => {
-    const rows = buildRows(many, none, NOW, false, false)
-    const { dim } = listLayers(rows, 0, 0, 556, 10)
-    expect(dim.split('\n').at(-1)).toBe('▼ Show 3 more')
+})
+
+describe('loadedFor', () => {
+  it('loads the next ten when the cursor reaches the last loaded thread', () => {
+    expect(loadedFor(10, 10, 25)).toBe(20)
+    expect(loadedFor(20, 20, 25)).toBe(25)
+  })
+  it('does nothing while the cursor is earlier in the list', () => {
+    expect(loadedFor(10, 5, 25)).toBe(10)
+    expect(loadedFor(10, 9, 25)).toBe(10)
+  })
+  it('never loads past the total and keeps what is loaded', () => {
+    expect(loadedFor(25, 25, 25)).toBe(25)
+    expect(loadedFor(20, 3, 25)).toBe(20)
+  })
+})
+
+describe('a ticking timer never wraps the row', () => {
+  it('keeps the whole line inside the width for every second of a timer', () => {
+    for (let seconds = 0; seconds < 3600; seconds += 7) {
+      const row = threadRow(thread({ status: 'running', runStartedAt: new Date(NOW - seconds * 1000).toISOString() }), false, NOW, false)
+      const { bright } = listLayers([row], 0, 0, 576)
+      expect(textWidth(bright)).toBeLessThanOrEqual(576 - SAFETY_PX)
+    }
+  })
+})
+
+describe('density', () => {
+  it('compact chat drops the blank line between messages', () => {
+    const ms = [msg('user', 'hi'), msg('assistant', 'hello')]
+    expect(chatLines(ms)).toEqual(['> hi', '', 'hello'])
+    expect(chatLines(ms, undefined, undefined, undefined, false)).toEqual(['> hi', 'hello'])
+  })
+  it('compact list rows show the project beside the title', () => {
+    const t = thread({ title: 'Fix login', project: 'storefront' })
+    expect(buildRows([t], () => false, NOW, false, 10, true)[1].title).toBe('Fix login · storefront')
+    expect(buildRows([t], () => false, NOW, false, 10, false)[1].title).toBe('Fix login')
+  })
+})
+
+describe('voice instructions in the chat', () => {
+  it('collapse to "(voice message)", with the reply-size note appended', () => {
+    expect(chatLines([msg('user', voiceText({ voicePrompt: DEFAULT_VOICE_PROMPT, density: 'compact' }))])).toEqual(['> (voice message)'])
   })
 })

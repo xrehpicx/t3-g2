@@ -15,7 +15,7 @@ It runs as an Even Hub app on your phone and talks straight to your own T3 serve
 - **Scrolling** follows new output. Swipe up to read back; it stops following and shows `▼ 3 new · tap for latest`. Tap, or swipe back to the bottom, to resume.
 - **Questions and approvals**: when an agent asks something, the live line says `★ a question for you · tap to answer`. Tap to answer one question at a time: swipe to an option, tap to pick (or tick, for multi-select), or hold to say your answer. Approvals (run a command, change files) work the same way with the agent's own options.
 - **Messages from other agents** show as a single line: `▷ sending thread: message`.
-- **Voice**: hold the touchpad, speak, release to send. The message steers the running turn if there is one. Empty, too-short or silent recordings are never sent. After you release there are three seconds to change your mind: the bottom line counts down, and a double tap cancels the send. A double tap mid-recording (for example to dismiss a notification) pauses it: hold to continue, tap to send, swipe to discard.
+- **Voice**: hold the touchpad, speak, release to send. The message steers the running turn if there is one. Empty, too-short or silent recordings are never sent. After you release there are three seconds to change your mind: the bottom line counts down, and a double tap cancels the send. Tap, then hold, opens the glasses menu: **Record hands-free** keeps recording after you let go (tap sends, double tap pauses). A double tap mid-recording (for example to dismiss a notification) pauses it: hold to continue, tap to send, swipe to discard.
 
 | Gesture | List | Thread |
 |---|---|---|
@@ -44,7 +44,7 @@ The app's page in the Even Realities app holds everything the glasses don't. Tap
    Leave out `orchestration:operate` for a watch-only pairing.
 3. Open T3 Code G2 in the Even Realities app, enter the address and code. Pair more machines the same way; their pinned threads are merged.
 
-Voice messages are transcribed by the agent on the machine running the thread, so that machine needs speech-to-text, for example [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`brew install whisper-cpp`) with a model in `~/.cache/whisper-models`. The instructions sent with each voice message can be edited on the phone.
+Voice messages are transcribed by the agent on the machine running the thread, so that machine needs speech-to-text, for example [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`brew install whisper-cpp`) with a model in `~/.cache/whisper-models`. The instructions sent with each voice message can be edited on the phone; a note on how many lines of reply fit the screen (fewer when comfortable, more when compact) is added automatically.
 
 ## Develop
 

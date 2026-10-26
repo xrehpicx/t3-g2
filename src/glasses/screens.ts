@@ -1,4 +1,4 @@
-import { charWidth, fitWidth, LINE_PX, textWidth, wrapWidth } from './font'
+import { charWidth, fitWidth, LINE_PX, SAFETY_PX, textWidth, wrapWidth } from './font'
 import type { PinnedThread, ThreadMessage, ThreadStatus } from '../t3/types'
 
 /**
@@ -64,9 +64,12 @@ export function age(iso: string, now: number): string {
   return `${Math.floor(s / 86400)}d`
 }
 
-/** Right-aligns `text` inside `widthPx` by padding with spaces (the font has no alignment). */
+/**
+ * Right-aligns `text` inside `widthPx` by padding with spaces (the font has no alignment). It stops
+ * `SAFETY_PX` short of the edge: a line that spills over wraps and shoves every row below it.
+ */
 export function alignRight(text: string, widthPx: number): string {
-  const pad = Math.max(0, Math.floor((widthPx - textWidth(text)) / charWidth(' ')))
+  const pad = Math.max(0, Math.floor((widthPx - SAFETY_PX - textWidth(text)) / charWidth(' ')))
   return ' '.repeat(pad) + text
 }
 
@@ -74,37 +77,40 @@ export function alignRight(text: string, widthPx: number): string {
 
 export interface ListRow {
   key: string
-  mark: Mark | 'add' | 'more' | 'less'
+  mark: Mark | 'add'
   title: string
   /** Right column: run timer, or how long ago it changed. */
   side: string
 }
 
-export function threadRow(t: PinnedThread, unread: boolean, now: number, showMachine: boolean): ListRow {
+export function threadRow(t: PinnedThread, unread: boolean, now: number, showMachine: boolean, showProject = false): ListRow {
   const mark = markFor(t.status, t.needsInput, unread)
   const side = mark === 'run' && t.runStartedAt ? clock(now - Date.parse(t.runStartedAt)) : mark === 'ask' ? 'you' : age(t.updatedAt, now)
-  return { key: `${t.machineId}:${t.id}`, mark, title: showMachine ? `${t.title} · ${t.machineLabel}` : t.title, side }
+  const extra = [showProject ? t.project : '', showMachine ? t.machineLabel : ''].filter(Boolean).join(' · ')
+  return { key: `${t.machineId}:${t.id}`, mark, title: extra ? `${t.title} · ${extra}` : t.title, side }
 }
 
 export const NEW_ROW: ListRow = { key: 'new', mark: 'add', title: 'New thread', side: '' }
 
-/** The list starts short; the rest sits behind "Show more". */
-export const LIST_LIMIT = 5
-export const MORE_KEY = 'more'
-export const LESS_KEY = 'less'
+/** The glasses list loads this many threads at a time, and the next batch as you reach the end. */
+export const PAGE_SIZE = 10
 
+/** `+ New thread` plus the first `loaded` threads. */
 export function buildRows(
   threads: PinnedThread[],
   unread: (t: PinnedThread) => boolean,
   now: number,
   showMachine: boolean,
-  expanded: boolean,
-  limit = LIST_LIMIT,
+  loaded: number = PAGE_SIZE,
+  showProject = false,
 ): ListRow[] {
-  const rows = threads.map(t => threadRow(t, unread(t), now, showMachine))
-  if (rows.length <= limit) return [NEW_ROW, ...rows]
-  if (expanded) return [NEW_ROW, ...rows, { key: LESS_KEY, mark: 'less', title: 'Show less', side: '' }]
-  return [NEW_ROW, ...rows.slice(0, limit), { key: MORE_KEY, mark: 'more', title: `Show ${rows.length - limit} more`, side: '' }]
+  return [NEW_ROW, ...threads.slice(0, loaded).map(t => threadRow(t, unread(t), now, showMachine, showProject))]
+}
+
+/** How many threads to have loaded once the cursor is on row `cursor` (row 0 is `+ New thread`). */
+export function loadedFor(loaded: number, cursor: number, total: number, page = PAGE_SIZE): number {
+  // Cursor on the last loaded thread: bring in the next batch.
+  return cursor >= loaded && loaded < total ? Math.min(total, loaded + page) : loaded
 }
 
 /** A solid bar beside the selected row reads at a glance; `>` is too thin on the display. */
@@ -117,7 +123,7 @@ export function buildRows(
 export function listLayers(rows: ListRow[], cursor: number, start: number, widthPx: number, visibleRows = LIST_ROWS) {
   const shown = rows.slice(start, start + visibleRows)
   const lines = shown.map(row => {
-    const prefix = `${row.mark === 'add' ? '+' : row.mark === 'more' ? '▼' : row.mark === 'less' ? '▲' : MARK[row.mark]} `
+    const prefix = `${row.mark === 'add' ? '+' : MARK[row.mark]} `
     const side = row.side ? `  ${row.side}` : ''
     const title = fitWidth(row.title, widthPx - textWidth(prefix) - textWidth(side) - 6)
     const left = prefix + title
@@ -138,14 +144,26 @@ export function listStart(count: number, cursor: number, previous: number, visib
   return start
 }
 
-export function listHeader(threads: PinnedThread[], machines: number): string {
-  const run = threads.filter(t => markFor(t.status, t.needsInput, false) === 'run').length
+export interface HeaderMachine { label: string; connected: boolean }
+
+/**
+ * The list's header row: what needs you on the left, which machine you are talking to on the right.
+ * Nothing in it is decoration; the old "PINNED 7" was just a count.
+ */
+export function listHeader(threads: PinnedThread[], machines: HeaderMachine[]): { left: string; right: string } {
   const ask = threads.filter(t => markFor(t.status, t.needsInput, false) === 'ask').length
-  const parts = [`PINNED ${threads.length}`]
-  if (run) parts.push(`${MARK.run} ${run}`)
-  if (ask) parts.push(`${MARK.ask} ${ask}`)
-  if (machines > 1) parts.push(`${machines} machines`)
-  return parts.join('   ')
+  const run = threads.filter(t => markFor(t.status, t.needsInput, false) === 'run').length
+  const parts: string[] = []
+  if (ask) parts.push(`${MARK.ask} ${ask} ${ask === 1 ? 'needs' : 'need'} you`)
+  if (run) parts.push(`${MARK.run} ${run} running`)
+  const left = parts.length ? parts.join('   ') : threads.length ? 'All quiet' : 'Nothing pinned'
+
+  const online = machines.filter(m => m.connected).length
+  const dot = online === machines.length && machines.length ? MARK.new : MARK.done
+  const right = !machines.length ? '' : machines.length === 1
+    ? `${dot} ${machines[0].label}`
+    : `${dot} ${online === machines.length ? `${machines.length} machines` : `${online} of ${machines.length} online`}`
+  return { left, right }
 }
 
 /**
@@ -204,6 +222,7 @@ export function chatLines(
   widthPx = TEXT_W,
   limit = MAX_MESSAGES,
   senderName: (threadId: string) => string | undefined = () => undefined,
+  gap = true,
 ): string[] {
   const lines: string[] = []
   const recent = messages.filter(m => m.role === 'user' || m.role === 'assistant').slice(-limit)
@@ -211,7 +230,7 @@ export function chatLines(
   for (const message of recent) {
     const text = displayText(message)
     if (!text) continue
-    if (lines.length) lines.push('')
+    if (gap && lines.length) lines.push('')
     if (isFromAgent(message)) {
       const from = (message.senderThreadId && senderName(message.senderThreadId)) || 'agent'
       lines.push(fitWidth(`${AGENT_MARK} ${from}: ${text.replace(/\s+/g, ' ')}`, widthPx))

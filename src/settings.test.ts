@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { OLD_VOICE_PROMPTS } from './config'
-import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, saveSettings } from './settings'
+import { DEFAULT_SETTINGS, loadSettings, normalizeSettings, saveSettings, voiceText } from './settings'
 import type { Store } from './t3/session'
 
 const memory = (): Store => {
   const data = new Map<string, string>()
   return { get: async k => data.get(k) ?? null, set: async (k, v) => void data.set(k, v), remove: async k => void data.delete(k) }
 }
+
+describe('voiceText', () => {
+  it('adds how much reply fits, more when compact', () => {
+    const a = voiceText({ voicePrompt: 'Hi.', density: 'comfortable' })
+    const b = voiceText({ voicePrompt: 'Hi.', density: 'compact' })
+    expect(a).toMatch(/^Hi\.\n\n.*6 lines of 50 characters \(roughly 300/)
+    expect(b).toMatch(/8 lines of 50 characters \(roughly 400/)
+  })
+})
 
 describe('settings', () => {
   it('falls back to defaults for missing or junk input', () => {
@@ -18,6 +27,17 @@ describe('settings', () => {
     const s = normalizeSettings({ projectId: 'p1', instanceId: 'codex', model: 'm', runtimeMode: 'auto', voicePrompt: '   ' })
     expect(s).toMatchObject({ projectId: 'p1', instanceId: 'codex', model: 'm', runtimeMode: 'auto' })
     expect(s.voicePrompt).toBe(DEFAULT_SETTINGS.voicePrompt)
+  })
+  it('keeps a valid send delay (including off) and resets anything else to the default', () => {
+    expect(normalizeSettings({ sendDelay: 0 }).sendDelay).toBe(0)
+    expect(normalizeSettings({ sendDelay: 10 }).sendDelay).toBe(10)
+    expect(normalizeSettings({ sendDelay: 7 }).sendDelay).toBe(DEFAULT_SETTINGS.sendDelay)
+    expect(normalizeSettings({}).sendDelay).toBe(3)
+  })
+  it('defaults to comfortable density and keeps compact', () => {
+    expect(normalizeSettings({}).density).toBe('comfortable')
+    expect(normalizeSettings({ density: 'compact' }).density).toBe('compact')
+    expect(normalizeSettings({ density: 'huge' }).density).toBe('comfortable')
   })
   it('upgrades a saved copy of an old default prompt, but keeps custom prompts', () => {
     expect(normalizeSettings({ voicePrompt: OLD_VOICE_PROMPTS[0] }).voicePrompt).toBe(DEFAULT_SETTINGS.voicePrompt)

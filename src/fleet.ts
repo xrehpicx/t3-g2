@@ -4,6 +4,7 @@ import { CANDIDATE_ORIGINS } from './config'
 import { diagnose, type DiagStep } from './t3/diagnose'
 import { exchangePairing, fetchDescriptor, type Descriptor } from './t3/http'
 import { canOperate } from './t3/launch'
+import { askingFirst } from './t3/pinned'
 import { DEMO_ID, DemoMachine } from './t3/demo'
 import { Machine, type LinkState, type MachineRecord } from './t3/machine'
 import { parsePairing } from './t3/pairing'
@@ -219,7 +220,7 @@ export class Fleet {
     const run = () => {
       this.flush = undefined
       const machines = [...this.machines.values()]
-      const threads = machines.flatMap(m => m.pinned())
+      const threads = askingFirst(machines.flatMap(m => m.pinned()))
       this.state = {
         ...this.state,
         phase: this.state.phase === 'loading' && !immediate ? 'loading' : machines.length ? 'ready' : 'unpaired',

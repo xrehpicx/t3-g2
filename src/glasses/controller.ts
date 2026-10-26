@@ -9,6 +9,7 @@ import { Recorder } from '../audio/recorder'
 import { AUDIO_PROBLEM_TEXT, audioProblem, durationMs, peak, pcm16ToWav } from '../audio/wav'
 import type { Fleet, FleetState } from '../fleet'
 import { currentStep, emptyLive, type PendingRequest, type ThreadLive } from '../t3/activity'
+import { voiceText } from '../settings'
 import { VOICE_ANSWER } from '../t3/send'
 import { SCRATCH } from '../t3/launch'
 import type { Machine, OpenThread } from '../t3/machine'
@@ -18,7 +19,7 @@ import { fitWidth } from './font'
 import {
   alignRight, BAR_W, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
   listHeader, listStart, levelGlyph, markFor, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
-  buildRows, LESS_KEY, MORE_KEY, LIST_LIMIT, TITLE_SIDE_W, titleBadge, type ListRow,
+  buildRows, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, type ListRow,
   approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
@@ -30,6 +31,14 @@ const SEEN_KEY = 't3g2.seen'
 const NOTICE_MS = 4_500
 const RENDER_MS = 300
 const LEVEL_SLOTS = 8
+/** Width reserved on the right of the list header for the machine name. */
+const HEADER_RIGHT_W = 220
+/** Items in the glasses' own menu (tap, then long press). */
+const MENU_CANCEL_SEND = 1
+const MENU_JUMP_TOP = 2
+const MENU_RECORD = 3
+const MENU_SEND_NOW = 4
+const MENU_DISCARD = 5
 const ROWS_TOTAL = 10
 
 /** Container ids/names are shared across screens; each screen uses a subset. */
@@ -82,9 +91,12 @@ export class GlassesController {
   private renderTimer: ReturnType<typeof setTimeout> | undefined
   private seen: Record<string, string> = {}
   private rendering: Promise<void> = Promise.resolve()
-  private latest: { layout: string; boxes: Box[] } | null = null
+  /** A hands-free recording: started from the menu, so it keeps going after the touchpad is released. */
+  private latched = false
+  private latest: { layout: string; boxes: Box[]; menu?: Array<[number, string]> } | null = null
   private cursorKey = 'new'
-  private expanded = false
+  /** How many threads the list has loaded so far; grows by a page as you reach the end. */
+  private loaded = PAGE_SIZE
   private listTop = 0
   private tick = 0
   private levels: string[] = []
@@ -169,15 +181,15 @@ export class GlassesController {
    * Draws a screen. The first draw of a layout rebuilds the page; later draws with the same layout only
    * push the containers whose text or brightness changed, which is flicker-free and cheap over BLE.
    */
-  private draw(nextLayout: string, nextBoxes: Box[]): Promise<void> {
+  private draw(nextLayout: string, nextBoxes: Box[], menu?: Array<[number, string]>): Promise<void> {
     // Only the newest frame matters: a frame queued behind a slow BLE update is dropped rather than
     // painted late over a newer screen.
-    this.latest = { layout: nextLayout, boxes: nextBoxes }
+    this.latest = { layout: nextLayout, boxes: nextBoxes, menu }
     this.rendering = this.rendering.catch(() => {}).then(async () => {
       const frame = this.latest
       if (!frame) return
       this.latest = null
-      const { layout, boxes } = frame
+      const { layout, boxes, menu } = frame
       if (layout === this.layout && this.created) {
         for (const box of boxes) {
           const text = box.text || ' '
@@ -211,7 +223,11 @@ export class GlassesController {
           isEventCapture: 0, paddingLength: 0, borderWidth: 0,
         })
       })]
-      const page = { containerTotalNum: textObject.length, textObject }
+      // The menu is replaced wholesale on every rebuild, so each screen declares its own.
+      const menuObject = menu
+        ? new this.sdk.MenuContainerProperty({ menuItems: menu.map(([itemID, itemName]) => new this.sdk.MenuItemProperty({ itemID, itemName })) })
+        : undefined
+      const page = { containerTotalNum: textObject.length, textObject, ...(menuObject ? { menuObject } : {}) }
       if (!this.created) {
         const result = await this.bridge.createStartUpPageContainer(new this.sdk.CreateStartUpPageContainer(page))
         // A reloaded WebView already owns a page; replace it instead.
@@ -254,7 +270,7 @@ export class GlassesController {
   // --- list --------------------------------------------------------------------------------
 
   private rows(): ListRow[] {
-    return buildRows(this.threads, this.unread, Date.now(), this.fleet.state.machines.length > 1, this.expanded)
+    return buildRows(this.threads, this.unread, Date.now(), this.fleet.state.machines.length > 1, this.loaded, this.fleet.state.settings.density === 'compact')
   }
 
   private cursor(rows: ListRow[]): number {
@@ -266,31 +282,33 @@ export class GlassesController {
     const rows = this.rows()
     const cursor = this.cursor(rows)
     this.listTop = listStart(rows.length, cursor, this.listTop)
-    const bar = scrollbar(rows.length, this.listTop, LIST_ROWS)
+    const bar = scrollbar(this.threads.length + 1, this.listTop, LIST_ROWS)
     const width = FULL_W - (bar.thumb ? BAR_W + 4 : 0)
     const { dim, bright } = listLayers(rows, cursor, this.listTop, width)
+    const header = listHeader(this.threads, this.fleet.state.machines.map(m => ({ label: m.label, connected: m.link === 'live' })))
     return this.draw(`list:${bar.thumb ? 'bar' : 'nobar'}`, [
-      { slot: 'head', x: 0, y: rowY(0), w: FULL_W, h: rowsH(1), text: listHeader(this.threads, this.fleet.state.machines.length), brightness: BRIGHT },
+      { slot: 'head', x: 0, y: rowY(0), w: FULL_W - HEADER_RIGHT_W, h: rowsH(1), text: fitWidth(header.left, FULL_W - HEADER_RIGHT_W - 8), brightness: BRIGHT },
+      { slot: 'side', x: FULL_W - HEADER_RIGHT_W, y: rowY(0), w: HEADER_RIGHT_W, h: rowsH(1), text: alignRight(fitWidth(header.right, HEADER_RIGHT_W - 8), HEADER_RIGHT_W), brightness: DIM },
       // Two layers at the same position: the selected row is bright, the rest dim.
       { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: dim, brightness: 1 },
       { slot: 'selected', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: bright, brightness: BRIGHT },
       ...(bar.thumb ? this.barBoxes(bar, rowY(1), rowsH(LIST_ROWS)) : []),
-    ])
+    ], [[MENU_JUMP_TOP, 'Jump to top']])
+  }
+
+  /** Back to `+ New thread` at the top of the list. */
+  private jumpToTop() {
+    this.cursorKey = 'new'
+    this.listTop = 0
+    void this.renderList()
   }
 
   private moveCursor(delta: number) {
     const rows = this.rows()
     const next = Math.max(0, Math.min(rows.length - 1, this.cursor(rows) + delta))
     this.cursorKey = rows[next].key
-    void this.renderList()
-  }
-
-  /** Show more: reveal the rest and land on the first newly shown thread. Show less: back to the first five. */
-  private toggleExpanded(expand: boolean) {
-    const revealed = this.threads[LIST_LIMIT]
-    this.expanded = expand
-    this.cursorKey = expand && revealed ? keyOf(revealed) : (this.threads[LIST_LIMIT - 1] ? keyOf(this.threads[LIST_LIMIT - 1]) : 'new')
-    this.listTop = 0
+    // Reached the last loaded thread: load the next page, so there is always more below.
+    this.loaded = loadedFor(this.loaded, next, this.threads.length)
     void this.renderList()
   }
 
@@ -298,7 +316,6 @@ export class GlassesController {
     const rows = this.rows()
     const row = rows[this.cursor(rows)]
     if (row.key === 'new') return void this.openCompose()
-    if (row.key === MORE_KEY || row.key === LESS_KEY) return this.toggleExpanded(row.key === MORE_KEY)
     const thread = this.threads.find(t => keyOf(t) === row.key)
     if (thread) void this.open(thread)
   }
@@ -363,10 +380,10 @@ export class GlassesController {
       return { text: `□ paused ${clock(this.recorder.elapsedMs)}   hold: continue · tap: send · swipe: discard`, brightness: BRIGHT }
     }
     if (this.recorder.recording) {
-      return { text: `● REC ${clock(this.recorder.elapsedMs)}   ${this.levels.join('')}   release to send`, brightness: BRIGHT }
+      return { text: `● REC ${clock(this.recorder.elapsedMs)}   ${this.levels.join('')}   ${this.latched ? 'tap: send · double tap: pause' : 'release to send'}`, brightness: BRIGHT }
     }
     if (this.recorder.busy) return { text: '● opening mic…', brightness: BRIGHT }
-    if (this.hold) return { text: `● sending in ${this.hold.left} · double tap to cancel`, brightness: BRIGHT }
+    if (this.hold) return { text: `● sending in ${this.hold.left} · swipe: send now · tap+hold: cancel`, brightness: BRIGHT }
     if (this.sending) return { text: `${spinner(this.tick)} sending voice message…`, brightness: BRIGHT }
     if (this.notice) return { text: this.notice, brightness: BRIGHT }
     const unseen = !this.scroll.following ? `▼ ${this.scroll.unseen ? `${this.scroll.unseen} new · ` : ''}tap for latest   ` : ''
@@ -383,13 +400,13 @@ export class GlassesController {
       return { text: fitWidth(unseen + what, FULL_W), brightness: BRIGHT }
     }
     if (unseen) return { text: unseen.trim(), brightness: MID }
-    return { text: 'hold to talk   ·   swipe up for history', brightness: DIM }
+    return { text: 'hold to talk   ·   tap+hold: hands-free', brightness: DIM }
   }
 
   /** Chat lines, naming the sending thread for agent-to-agent messages. */
   private chat() {
     const machine = this.current && this.machineOf(this.current)
-    return chatLines(this.live.messages, undefined, undefined, id => machine?.shell.threads.get(id)?.title)
+    return chatLines(this.live.messages, undefined, undefined, id => machine?.shell.threads.get(id)?.title, this.fleet.state.settings.density !== 'compact')
   }
 
   private renderThread() {
@@ -415,7 +432,7 @@ export class GlassesController {
       { slot: 'body', x: 0, y: rowY(1), w: TEXT_W, h: rowsH(rows), text: loading ? 'Loading…' : bottomAnchor(view.lines, rows) || 'No messages yet.', brightness: MID },
       ...this.barBoxes(bar, rowY(1), rowsH(rows)),
       { slot: 'status', x: 0, y: rowY(1 + rows), w: FULL_W, h: rowsH(1), text: fitWidth(status.text, FULL_W - 4), brightness: status.brightness },
-    ])
+    ], this.voiceMenu())
   }
 
   // --- answering ---------------------------------------------------------------------------
@@ -564,7 +581,7 @@ export class GlassesController {
       { slot: 'head', x: 0, y: rowY(0), w: FULL_W, h: rowsH(1), text: '+ New thread', brightness: BRIGHT },
       { slot: 'status', x: 0, y: rowY(1), w: FULL_W, h: rowsH(1), text: this.recorder.busy || this.sending || this.hold || this.notice ? status.text : 'double tap to go back', brightness: this.recorder.busy || this.sending || this.hold || this.notice ? status.brightness : DIM },
       { slot: 'body', x: 0, y: rowY(3), w: FULL_W, h: rowsH(7), text: body, brightness: MID },
-    ])
+    ], this.voiceMenu())
   }
 
   // --- notices -----------------------------------------------------------------------------
@@ -582,6 +599,20 @@ export class GlassesController {
   }
 
   // --- voice -------------------------------------------------------------------------------
+
+  /** The glasses menu (tap, then long press) on screens that can record. */
+  private voiceMenu(): Array<[number, string]> {
+    if (this.hold) return [[MENU_CANCEL_SEND, 'Cancel voice send']]
+    if (this.latched && this.recorder.busy) return [[MENU_SEND_NOW, 'Send recording'], [MENU_DISCARD, 'Discard recording']]
+    return [[MENU_RECORD, 'Record hands-free']]
+  }
+
+  private async startHandsFree() {
+    if (this.hold || this.recorder.busy) return
+    this.latched = true
+    await this.startRecording()
+    if (!this.recorder.busy) this.latched = false // the mic did not open, or the screen cannot record
+  }
 
   private async startRecording() {
     if (this.hold) return
@@ -603,6 +634,7 @@ export class GlassesController {
   }
 
   private async stopAndSend() {
+    this.latched = false
     const recording = await this.recorder.release()
     if (!recording) return this.refresh()
     // Nothing is uploaded unless it is audible speech.
@@ -618,13 +650,17 @@ export class GlassesController {
       delete this.answer.chosen[q.id]
       return this.nextQuestion()
     }
-    // Three seconds to change your mind; a double tap in this window cancels the send.
-    const hold = startSendHold(() => void this.refresh())
-    this.hold = hold
-    void this.refresh() // the first tick fired before `this.hold` was set
-    const go = await hold.done
-    this.hold = null
-    if (!go) return this.showNotice('Cancelled. Nothing was sent.', 3000)
+    // A grace period to change your mind (set on the phone; 0 sends at once). A swipe sends now; the
+    // glasses menu (tap, then long press) cancels.
+    const delay = this.fleet.state.settings.sendDelay
+    if (delay > 0) {
+      const hold = startSendHold(() => void this.refresh(), delay)
+      this.hold = hold
+      void this.refresh() // the first tick fired before `this.hold` was set
+      const result = await hold.done
+      this.hold = null
+      if (result === 'cancelled') return this.showNotice('Cancelled. Nothing was sent.', 3000)
+    }
 
     this.sending = true
     await this.refresh()
@@ -643,7 +679,7 @@ export class GlassesController {
     const thread = this.current
     const machine = thread && this.machineOf(thread)
     if (!thread || !machine) throw new Error('This thread is no longer available.')
-    await machine.sendVoice(thread, wav, this.fleet.state.settings.voicePrompt)
+    await machine.sendVoice(thread, wav, voiceText(this.fleet.state.settings))
     this.scroll = jumpToBottom(this.scroll)
   }
 
@@ -654,7 +690,7 @@ export class GlassesController {
     const stamp = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
     const title = `Glasses ${stamp}`
     const threadId = await machine.launch({
-      settings, title, text: settings.voicePrompt,
+      settings, title, text: voiceText(settings),
       attachment: { name: `voice-${Date.now()}.wav`, mimeType: 'audio/wav', bytes: wav },
     })
     const project = settings.projectId === SCRATCH ? '' : machine.projects().find(p => p.id === settings.projectId)?.title ?? ''
@@ -671,6 +707,7 @@ export class GlassesController {
   }
 
   private async cancelRecording(reason?: string) {
+    this.latched = false
     await this.recorder.cancel()
     if (reason) await this.showNotice(reason, 2500)
     else await this.refresh()
@@ -701,9 +738,29 @@ export class GlassesController {
       void this.cancelRecording()
       return
     }
-    // During the grace period everything is ignored except the double tap that cancels the send.
+    // The glasses' own menu (tap, then long press).
+    if (event.menuItemClickEvent) {
+      const item = event.menuItemClickEvent.itemID
+      if (item === MENU_CANCEL_SEND) {
+        if (this.hold) this.hold.cancel()
+        else void this.showNotice('Nothing to cancel.', 2000)
+      } else if (item === MENU_JUMP_TOP && this.screen === 'list') {
+        this.jumpToTop()
+      } else if (item === MENU_RECORD) {
+        void this.startHandsFree()
+      } else if (item === MENU_SEND_NOW) {
+        void this.stopAndSend()
+      } else if (item === MENU_DISCARD) {
+        void this.cancelRecording('Recording discarded.')
+      }
+      return
+    }
+    // While a send is counting down, a swipe sends now. Everything else waits; cancelling is in the menu,
+    // so a double tap meant for a notification cannot cancel it by accident.
     if (this.hold) {
-      if (any(T.DOUBLE_CLICK_EVENT)) this.hold.cancel()
+      if (text === T.SCROLL_TOP_EVENT || text === T.SCROLL_BOTTOM_EVENT) this.hold.sendNow()
+      else if (any(T.FOREGROUND_EXIT_EVENT)) this.hold.pause() // the menu or a notification is up
+      else if (any(T.FOREGROUND_ENTER_EVENT)) this.hold.resume()
       return
     }
     // Something else took the screen (a notification, the Even menu): pause, don't lose the recording.
@@ -724,8 +781,15 @@ export class GlassesController {
       else void this.bridge.shutDownPageContainer(1)
       return
     }
-    if (sys === T.LONG_PRESS_EVENT) { void this.startRecording(); return }
+    if (sys === T.LONG_PRESS_EVENT) {
+      if (this.latched && !this.recorder.paused) return // hands-free: the touchpad is not held
+      this.latched = false // holding to continue a paused hands-free recording goes back to push-to-talk
+      if (this.screen === 'list') this.jumpToTop()
+      else void this.startRecording()
+      return
+    }
     if (sys === T.LONG_PRESS_RELEASE_EVENT) {
+      if (this.latched) return
       if (this.recorder.recording || (this.recorder.busy && !this.recorder.paused)) void this.stopAndSend()
       return
     }
@@ -733,6 +797,12 @@ export class GlassesController {
     if (this.recorder.paused) {
       if (any(T.CLICK_EVENT)) void this.stopAndSend()
       else if (text === T.SCROLL_TOP_EVENT || text === T.SCROLL_BOTTOM_EVENT) void this.cancelRecording('Recording discarded.')
+      return
+    }
+
+    // A hands-free recording: tap sends. Swipes are ignored so a stray one cannot lose it.
+    if (this.latched && this.recorder.busy) {
+      if (any(T.CLICK_EVENT)) void this.stopAndSend()
       return
     }
 

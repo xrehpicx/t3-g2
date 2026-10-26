@@ -9,7 +9,8 @@ import { Textarea } from 'even-toolkit/web/textarea'
 import { CANDIDATE_ORIGINS, DEFAULT_SERVER } from '../config'
 import type { Fleet, FleetState, FoundMachine } from '../fleet'
 import { clock, markFor, MARK } from '../glasses/screens'
-import { DEFAULT_SETTINGS, RUNTIME_MODES, type RuntimeMode } from '../settings'
+import { SEND_DELAYS } from '../audio/hold'
+import { DEFAULT_SETTINGS, REPLY_FIT, DENSITIES, RUNTIME_MODES, type Density, type RuntimeMode } from '../settings'
 import type { DiagStep } from '../t3/diagnose'
 import { SCRATCH } from '../t3/launch'
 import type { ServerConfig } from '../t3/serverConfig'
@@ -36,6 +37,9 @@ const ago = (iso: string) => {
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
   return `${Math.floor(s / 86400)}d ago`
 }
+
+/** The phone page shows this many pinned threads until you ask for the rest. */
+const PHONE_LIST_LIMIT = 5
 
 const MARK_LABEL = { run: 'Running', ask: 'Needs you', new: 'New reply', done: 'Done', idle: 'Idle', fail: 'Failed', stop: 'Stopped' } as const
 
@@ -185,6 +189,7 @@ export function App({ fleet }: { fleet: Fleet }) {
     void fleet.diagnose(id).then(steps => setDiag(d => ({ ...d, [id]: steps })))
   }
   const [addOpen, setAddOpen] = useState(false)
+  const [showAll, setShowAll] = useState(false)
 
   const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null)
   useEffect(() => {
@@ -240,7 +245,17 @@ export function App({ fleet }: { fleet: Fleet }) {
       {state.machines.length > 0 && (
         <Section label="Pinned threads · tap to open on your glasses">
           {state.threads.length
-            ? state.threads.map(t => <ThreadRow key={`${t.machineId}:${t.id}`} thread={t} multi={multi} onOpen={() => void openOnGlasses(t)} />)
+            ? (
+              <>
+                {(showAll ? state.threads : state.threads.slice(0, PHONE_LIST_LIMIT)).map(t => <ThreadRow key={`${t.machineId}:${t.id}`} thread={t} multi={multi} onOpen={() => void openOnGlasses(t)} />)}
+                {state.threads.length > PHONE_LIST_LIMIT && (
+                  <ListItem
+                    title={showAll ? 'Show fewer' : `Show ${state.threads.length - PHONE_LIST_LIMIT} more`}
+                    onPress={() => setShowAll(v => !v)}
+                  />
+                )}
+              </>
+            )
             : <div className="bg-surface px-4 py-4 text-[15px] text-text-dim">Pin a thread in T3 and it shows up here and on your glasses.</div>}
         </Section>
       )}
@@ -273,6 +288,26 @@ export function App({ fleet }: { fleet: Fleet }) {
         </Section>
       )}
 
+      {state.machines.length > 0 && (
+        <Section label="Glasses display">
+          <Row label="Density" hint="The glasses use one fixed font size, so this changes how much fits instead. Compact removes the gaps between chat messages and adds each thread's project to the list.">
+            <Select value={s.density} options={DENSITIES} onValueChange={density => void fleet.updateSettings({ density: density as Density })} />
+          </Row>
+        </Section>
+      )}
+
+      {state.machines.length > 0 && (
+        <Section label="Voice messages">
+          <Row label="Time to cancel" hint="After you release, wait this long before sending. Swipe to send straight away; tap, then hold, and pick Cancel voice send to cancel.">
+            <Select
+              value={String(s.sendDelay)}
+              options={SEND_DELAYS.map(v => ({ value: String(v), label: v === 0 ? 'Send right away' : `${v} second${v === 1 ? '' : 's'}` }))}
+              onValueChange={v => void fleet.updateSettings({ sendDelay: Number(v) })}
+            />
+          </Row>
+        </Section>
+      )}
+
       {machine && (
         <Section
           label="Sent with every voice message"
@@ -280,6 +315,9 @@ export function App({ fleet }: { fleet: Fleet }) {
         >
           <div className="bg-surface p-3">
             <Textarea value={voice} onChange={e => setVoice(e.target.value)} rows={4} spellCheck={false} aria-label="Instructions sent with voice messages" />
+            <p className="mt-2 text-[13px] text-text-dim">
+              A note on how much reply fits your glasses (about {REPLY_FIT[s.density].lines} lines, from the Glasses display setting) is added after this.
+            </p>
           </div>
         </Section>
       )}
