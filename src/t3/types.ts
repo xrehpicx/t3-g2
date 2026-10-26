@@ -20,6 +20,8 @@ export interface ThreadShell {
   activityRunStatus?: string | null
   settledOverride?: 'settled' | 'active' | null
   snoozedUntil?: string | null
+  /** Set by T3 when someone opens the thread (not for background activity on an open one). */
+  opens?: { openedAt?: number } | null
   lineage: { relationshipToParent?: string | null }
 }
 

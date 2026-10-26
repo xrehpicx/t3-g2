@@ -19,6 +19,10 @@ describe('settings', () => {
     expect(s).toMatchObject({ projectId: 'p1', instanceId: 'codex', model: 'm', runtimeMode: 'auto' })
     expect(s.voicePrompt).toBe(DEFAULT_SETTINGS.voicePrompt)
   })
+  it('follows T3 by default and remembers turning it off', () => {
+    expect(normalizeSettings({}).followT3).toBe(true)
+    expect(normalizeSettings({ followT3: false }).followT3).toBe(false)
+  })
   it('upgrades a saved copy of an old default prompt, but keeps custom prompts', () => {
     expect(normalizeSettings({ voicePrompt: OLD_VOICE_PROMPTS[0] }).voicePrompt).toBe(DEFAULT_SETTINGS.voicePrompt)
     expect(normalizeSettings({ voicePrompt: 'mine' }).voicePrompt).toBe('mine')

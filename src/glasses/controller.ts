@@ -16,8 +16,8 @@ import type { PinnedThread } from '../t3/types'
 import { fitWidth } from './font'
 import {
   alignRight, BAR_W, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
-  listHeader, listStart, levelGlyph, markFor, NEW_ROW, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
-  threadRow, TITLE_SIDE_W, titleBadge, type ListRow,
+  listHeader, listStart, levelGlyph, markFor, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
+  buildRows, LESS_KEY, MORE_KEY, LIST_LIMIT, TITLE_SIDE_W, titleBadge, type ListRow,
   approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
@@ -81,6 +81,7 @@ export class GlassesController {
   private rendering: Promise<void> = Promise.resolve()
   private latest: { layout: string; boxes: Box[] } | null = null
   private cursorKey = 'new'
+  private expanded = false
   private listTop = 0
   private tick = 0
   private levels: string[] = []
@@ -108,6 +109,7 @@ export class GlassesController {
     try { this.seen = JSON.parse((await this.store.get(SEEN_KEY)) ?? '{}') } catch { this.seen = {} }
     this.bridge.onEvenHubEvent(event => this.onEvent(event))
     this.fleet.subscribe(state => void this.onFleet(state))
+    this.fleet.subscribeOpened((machineId, threadId) => void this.followOpened(machineId, threadId))
     // One clock drives timers, the activity spinner and the record meter. It only redraws what changed.
     setInterval(() => { this.tick++; void this.refresh() }, 1000)
     await this.onFleet(this.fleet.state)
@@ -249,9 +251,7 @@ export class GlassesController {
   // --- list --------------------------------------------------------------------------------
 
   private rows(): ListRow[] {
-    const now = Date.now()
-    const multi = this.fleet.state.machines.length > 1
-    return [NEW_ROW, ...this.threads.map(t => threadRow(t, this.unread(t), now, multi))]
+    return buildRows(this.threads, this.unread, Date.now(), this.fleet.state.machines.length > 1, this.expanded)
   }
 
   private cursor(rows: ListRow[]): number {
@@ -282,12 +282,38 @@ export class GlassesController {
     void this.renderList()
   }
 
+  /** Show more: reveal the rest and land on the first newly shown thread. Show less: back to the first five. */
+  private toggleExpanded(expand: boolean) {
+    const revealed = this.threads[LIST_LIMIT]
+    this.expanded = expand
+    this.cursorKey = expand && revealed ? keyOf(revealed) : (this.threads[LIST_LIMIT - 1] ? keyOf(this.threads[LIST_LIMIT - 1]) : 'new')
+    this.listTop = 0
+    void this.renderList()
+  }
+
   private openCursor() {
     const rows = this.rows()
     const row = rows[this.cursor(rows)]
     if (row.key === 'new') return void this.openCompose()
+    if (row.key === MORE_KEY || row.key === LESS_KEY) return this.toggleExpanded(row.key === MORE_KEY)
     const thread = this.threads.find(t => keyOf(t) === row.key)
     if (thread) void this.open(thread)
+  }
+
+  // --- following T3 ------------------------------------------------------------------------
+
+  /**
+   * A thread was opened in T3 on another device: bring it up on the glasses. Never interrupts
+   * something in progress (talking, sending, answering, writing a new thread).
+   */
+  private async followOpened(machineId: string, threadId: string) {
+    if (!this.fleet.state.settings.followT3) return
+    if (this.screen !== 'list' && this.screen !== 'thread') return
+    if (this.recorder.busy || this.sending) return
+    if (this.current?.machineId === machineId && this.current.id === threadId) return
+    const thread = this.fleet.machine(machineId)?.thread(threadId)
+    if (!thread) return
+    await this.open(thread)
   }
 
   // --- thread ------------------------------------------------------------------------------

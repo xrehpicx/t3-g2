@@ -6,6 +6,7 @@ import { Select } from 'even-toolkit/web/select'
 import { SettingsGroup } from 'even-toolkit/web/settings-group'
 import { StatusDot } from 'even-toolkit/web/status-dot'
 import { Textarea } from 'even-toolkit/web/textarea'
+import { Toggle } from 'even-toolkit/web/toggle'
 import { CANDIDATE_ORIGINS, DEFAULT_SERVER } from '../config'
 import type { Fleet, FleetState, FoundMachine } from '../fleet'
 import { clock, markFor, MARK } from '../glasses/screens'
@@ -204,6 +205,14 @@ export function App({ fleet }: { fleet: Fleet }) {
           {state.threads.length
             ? state.threads.map(t => <ThreadRow key={`${t.machineId}:${t.id}`} thread={t} multi={multi} />)
             : <div className="bg-surface px-4 py-4 text-[15px] text-text-dim">Pin a thread in T3 and it shows up here and on your glasses.</div>}
+        </Section>
+      )}
+
+      {state.machines.length > 0 && (
+        <Section label="Glasses">
+          <Row label="Follow T3" hint="Open a thread on the glasses when you open it in T3 on another device. Never while you are talking or answering.">
+            <Toggle checked={s.followT3} onChange={followT3 => void fleet.updateSettings({ followT3 })} />
+          </Row>
         </Section>
       )}
 

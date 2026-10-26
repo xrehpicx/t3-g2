@@ -143,7 +143,7 @@ describe('live indicators', () => {
   })
 })
 
-import { approvalView, choiceLayers, DONE_KEY, questionView } from './screens'
+import { approvalView, buildRows, choiceLayers, DONE_KEY, LESS_KEY, MORE_KEY, questionView } from './screens'
 
 describe('answer screens', () => {
   const q = { header: 'Library', question: 'Which charting library should we use?', options: [{ label: 'Recharts', description: '98 kB' }, { label: 'Visx' }] }
@@ -173,5 +173,30 @@ describe('answer screens', () => {
     const { dim, bright } = choiceLayers(v.rows, 1, 0, 5)
     expect(dim.split('\n')).toEqual(['○ Recharts   98 kB', ''])
     expect(bright.split('\n')).toEqual(['', '○ Visx'])
+  })
+})
+
+describe('buildRows', () => {
+  const many = Array.from({ length: 8 }, (_, i) => thread({ id: `t${i}`, title: `Thread ${i}` }))
+  const none = () => false
+  it('shows everything when it is short, with no Show more row', () => {
+    const rows = buildRows(many.slice(0, 5), none, NOW, false, false)
+    expect(rows.map(r => r.key)).toEqual(['new', 'm:t0', 'm:t1', 'm:t2', 'm:t3', 'm:t4'])
+  })
+  it('starts with five threads and a Show more row that counts the rest', () => {
+    const rows = buildRows(many, none, NOW, false, false)
+    expect(rows).toHaveLength(1 + 5 + 1)
+    expect(rows.at(-1)).toMatchObject({ key: MORE_KEY, mark: 'more', title: 'Show 3 more' })
+  })
+  it('expands to all of them with a Show less row at the end', () => {
+    const rows = buildRows(many, none, NOW, false, true)
+    expect(rows).toHaveLength(1 + 8 + 1)
+    expect(rows.at(-1)).toMatchObject({ key: LESS_KEY, mark: 'less', title: 'Show less' })
+    expect(rows[8].key).toBe('m:t7')
+  })
+  it('draws the toggle rows with arrows', () => {
+    const rows = buildRows(many, none, NOW, false, false)
+    const { dim } = listLayers(rows, 0, 0, 556, 10)
+    expect(dim.split('\n').at(-1)).toBe('▼ Show 3 more')
   })
 })

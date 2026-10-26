@@ -74,7 +74,7 @@ export function alignRight(text: string, widthPx: number): string {
 
 export interface ListRow {
   key: string
-  mark: Mark | 'add'
+  mark: Mark | 'add' | 'more' | 'less'
   title: string
   /** Right column: run timer, or how long ago it changed. */
   side: string
@@ -88,6 +88,25 @@ export function threadRow(t: PinnedThread, unread: boolean, now: number, showMac
 
 export const NEW_ROW: ListRow = { key: 'new', mark: 'add', title: 'New thread', side: '' }
 
+/** The list starts short; the rest sits behind "Show more". */
+export const LIST_LIMIT = 5
+export const MORE_KEY = 'more'
+export const LESS_KEY = 'less'
+
+export function buildRows(
+  threads: PinnedThread[],
+  unread: (t: PinnedThread) => boolean,
+  now: number,
+  showMachine: boolean,
+  expanded: boolean,
+  limit = LIST_LIMIT,
+): ListRow[] {
+  const rows = threads.map(t => threadRow(t, unread(t), now, showMachine))
+  if (rows.length <= limit) return [NEW_ROW, ...rows]
+  if (expanded) return [NEW_ROW, ...rows, { key: LESS_KEY, mark: 'less', title: 'Show less', side: '' }]
+  return [NEW_ROW, ...rows.slice(0, limit), { key: MORE_KEY, mark: 'more', title: `Show ${rows.length - limit} more`, side: '' }]
+}
+
 /** A solid bar beside the selected row reads at a glance; `>` is too thin on the display. */
 /**
  * The list as two overlaid layers with identical line positions: every row except the selected one on
@@ -98,11 +117,11 @@ export const NEW_ROW: ListRow = { key: 'new', mark: 'add', title: 'New thread', 
 export function listLayers(rows: ListRow[], cursor: number, start: number, widthPx: number, visibleRows = LIST_ROWS) {
   const shown = rows.slice(start, start + visibleRows)
   const lines = shown.map(row => {
-    const prefix = `${row.mark === 'add' ? '+' : MARK[row.mark]} `
+    const prefix = `${row.mark === 'add' ? '+' : row.mark === 'more' ? '▼' : row.mark === 'less' ? '▲' : MARK[row.mark]} `
     const side = row.side ? `  ${row.side}` : ''
     const title = fitWidth(row.title, widthPx - textWidth(prefix) - textWidth(side) - 6)
     const left = prefix + title
-    return left + alignRight(side, widthPx - textWidth(left) - 4)
+    return side ? left + alignRight(side, widthPx - textWidth(left) - 4) : left
   })
   const selected = cursor - start
   return {

@@ -6,7 +6,7 @@ describe('parsePairing', () => {
     expect(parsePairing('https://mac.tail1.ts.net/pair#token=ABC123')).toEqual({ origin: 'https://mac.tail1.ts.net', credential: 'ABC123' })
   })
   it('reads a token query parameter', () => {
-    expect(parsePairing('http://10.0.1.5:3773/?token=XYZ').credential).toBe('XYZ')
+    expect(parsePairing('http://example.test:3773/?token=XYZ').credential).toBe('XYZ')
   })
   it('combines a bare host with a separate code and defaults to https', () => {
     expect(parsePairing('mac.tail1.ts.net', ' CODE ')).toEqual({ origin: 'https://mac.tail1.ts.net', credential: 'CODE' })

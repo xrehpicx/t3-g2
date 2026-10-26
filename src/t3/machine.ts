@@ -7,7 +7,7 @@ import { rpc, warmRpc } from './rpc'
 import { parseServerConfig, type ServerConfig } from './serverConfig'
 import { respondToRequest, sendTextMessage, sendVoiceMessage, type RequestResponse } from './send'
 import type { Session } from './session'
-import { applyShellItem, emptyShell, type ShellItem, type ShellState } from './shellStore'
+import { applyShellItem, emptyShell, wasOpened, type ShellItem, type ShellState } from './shellStore'
 import { openStream, type StreamHandle } from './stream'
 import type { PinnedThread, ThreadStatus } from './types'
 import { fetchShell } from './http'
@@ -38,6 +38,8 @@ export class Machine {
   private fallback: ReturnType<typeof setInterval> | undefined
   private lastLive = 0
   private firstSnapshot = true
+  /** Called when a thread is opened in T3 on some device. Set by the Fleet. */
+  onOpened: (threadId: string) => void = () => {}
   private configCache: Promise<ServerConfig> | null = null
 
   constructor(
@@ -65,7 +67,12 @@ export class Machine {
         if (item.kind === 'snapshot' && item.snapshot && this.firstSnapshot) {
           this.firstSnapshot = false
           this.shell = shellFromSnapshot(item.snapshot)
-        } else this.shell = applyShellItem(this.shell, item)
+        } else {
+          if (item.kind === 'thread.updated' && item.thread) {
+            if (wasOpened(this.shell.threads.get(item.thread.id), item.thread)) this.onOpened(item.thread.id)
+          }
+          this.shell = applyShellItem(this.shell, item)
+        }
         this.error = null
         this.onChange()
       },

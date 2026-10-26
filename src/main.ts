@@ -23,6 +23,10 @@ const fleet = new Fleet(net, store, 'T3 on G2')
 
 createRoot(root).render(createElement(App, { fleet }))
 await fleet.init()
+// #reset forgets every machine and the demo, for development.
+if (new URLSearchParams(location.hash.slice(1)).has('reset')) {
+  for (const m of fleet.state.machines) await fleet.remove(m.id)
+}
 
 // Dev/QR sideload convenience: #server=…&token=… pairs without typing, then clears the hash.
 const hash = new URLSearchParams(location.hash.slice(1))

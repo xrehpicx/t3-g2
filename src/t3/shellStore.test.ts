@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyShellItem, fromSnapshot } from './shellStore'
+import { applyShellItem, fromSnapshot, wasOpened } from './shellStore'
 import type { ThreadShell } from './types'
 
 const thread = (id: string, over: Partial<ThreadShell> = {}): ThreadShell => ({
@@ -45,5 +45,24 @@ describe('shell store', () => {
     const next = applyShellItem(start, { kind: 'snapshot', snapshot: { threads: [thread('a', { status: 'running' }), thread('n')], projects: [], snapshotSequence: 11 } as never })
     expect(next.threads.get('a')?.status).toBe('running')
     expect(next.threads.has('n')).toBe(true)
+  })
+})
+
+describe('wasOpened', () => {
+  const at = (openedAt?: number) => thread('a', openedAt === undefined ? {} : { opens: { openedAt } })
+  it('is true only when openedAt moves forward', () => {
+    expect(wasOpened(at(100), at(200))).toBe(true)
+    expect(wasOpened(at(200), at(200))).toBe(false)
+    expect(wasOpened(at(200), at(100))).toBe(false)
+  })
+  it('ignores threads that are new to us or have never been opened', () => {
+    expect(wasOpened(undefined, at(200))).toBe(false)
+    expect(wasOpened(at(undefined), at(200))).toBe(false)
+    expect(wasOpened(at(100), at(undefined))).toBe(false)
+  })
+  it('is not triggered by background activity that only touches lastVisitedAt', () => {
+    const before = { ...at(100), lastVisitedAt: '2026-01-01T00:00:00Z' }
+    const after = { ...at(100), lastVisitedAt: '2026-01-01T00:05:00Z' }
+    expect(wasOpened(before, after)).toBe(false)
   })
 })

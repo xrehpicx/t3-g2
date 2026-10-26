@@ -72,3 +72,14 @@ export function applyShellItem(state: ShellState, item: ShellItem): ShellState {
       return state
   }
 }
+
+/**
+ * True when `after` is a thread someone just opened in T3. T3 moves `opens.openedAt` only for a real
+ * open, not for activity on a thread that is already open, and a thread we have not seen before is
+ * not an open (it is just new to us).
+ */
+export function wasOpened(before: ThreadShell | undefined, after: ThreadShell): boolean {
+  const was = before?.opens?.openedAt
+  const now = after.opens?.openedAt
+  return was !== undefined && now !== undefined && now > was
+}

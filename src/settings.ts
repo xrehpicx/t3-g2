@@ -12,6 +12,8 @@ export interface NewThreadSettings {
   model: string
   runtimeMode: RuntimeMode
   voicePrompt: string
+  /** Open a thread on the glasses when it is opened in T3 on another device. */
+  followT3: boolean
 }
 
 export const RUNTIME_MODES: Array<{ value: RuntimeMode; label: string }> = [
@@ -27,6 +29,7 @@ export const DEFAULT_SETTINGS: NewThreadSettings = {
   model: '',
   runtimeMode: 'full-access',
   voicePrompt: DEFAULT_VOICE_PROMPT,
+  followT3: true,
 }
 
 const KEY = 't3g2.settings'
@@ -43,6 +46,7 @@ export function normalizeSettings(raw: unknown): NewThreadSettings {
     model: text(o.model, ''),
     runtimeMode: isRuntime(o.runtimeMode) ? o.runtimeMode : DEFAULT_SETTINGS.runtimeMode,
     voicePrompt: upgradePrompt(text(o.voicePrompt, '').trim()),
+    followT3: o.followT3 !== false,
   }
 }
 
