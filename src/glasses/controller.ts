@@ -4,6 +4,7 @@ import type {
   EvenHubEvent,
   OsEventTypeList as EventType,
 } from '@evenrealities/even_hub_sdk'
+import { startSendHold, type SendHold } from '../audio/hold'
 import { Recorder } from '../audio/recorder'
 import { AUDIO_PROBLEM_TEXT, audioProblem, durationMs, peak, pcm16ToWav } from '../audio/wav'
 import type { Fleet, FleetState } from '../fleet'
@@ -74,6 +75,8 @@ export class GlassesController {
   private scroll: ScrollState = initialScroll()
   private recorder: Recorder
   private sending = false
+  /** The 3-second grace period before a voice message goes out; a double tap cancels it. */
+  private hold: SendHold | null = null
   private notice = ''
   private noticeTimer: ReturnType<typeof setTimeout> | undefined
   private renderTimer: ReturnType<typeof setTimeout> | undefined
@@ -363,6 +366,7 @@ export class GlassesController {
       return { text: `● REC ${clock(this.recorder.elapsedMs)}   ${this.levels.join('')}   release to send`, brightness: BRIGHT }
     }
     if (this.recorder.busy) return { text: '● opening mic…', brightness: BRIGHT }
+    if (this.hold) return { text: `● sending in ${this.hold.left} · double tap to cancel`, brightness: BRIGHT }
     if (this.sending) return { text: `${spinner(this.tick)} sending voice message…`, brightness: BRIGHT }
     if (this.notice) return { text: this.notice, brightness: BRIGHT }
     const unseen = !this.scroll.following ? `▼ ${this.scroll.unseen ? `${this.scroll.unseen} new · ` : ''}tap for latest   ` : ''
@@ -439,7 +443,7 @@ export class GlassesController {
   }
 
   private answerHint(): { text: string; brightness: number } {
-    if (this.recorder.busy || this.sending || this.notice) return this.statusRow(false)
+    if (this.recorder.busy || this.sending || this.hold || this.notice) return this.statusRow(false)
     const a = this.answer
     if (!a || a.request.kind === 'approval') return { text: 'tap: choose   ·   double tap: back', brightness: DIM }
     const q = a.request.questions[a.q]
@@ -558,7 +562,7 @@ export class GlassesController {
     ].map(line => fitWidth(line, FULL_W - 8)).join('\n')
     return this.draw('compose', [
       { slot: 'head', x: 0, y: rowY(0), w: FULL_W, h: rowsH(1), text: '+ New thread', brightness: BRIGHT },
-      { slot: 'status', x: 0, y: rowY(1), w: FULL_W, h: rowsH(1), text: this.recorder.busy || this.sending || this.notice ? status.text : 'double tap to go back', brightness: this.recorder.busy || this.sending || this.notice ? status.brightness : DIM },
+      { slot: 'status', x: 0, y: rowY(1), w: FULL_W, h: rowsH(1), text: this.recorder.busy || this.sending || this.hold || this.notice ? status.text : 'double tap to go back', brightness: this.recorder.busy || this.sending || this.hold || this.notice ? status.brightness : DIM },
       { slot: 'body', x: 0, y: rowY(3), w: FULL_W, h: rowsH(7), text: body, brightness: MID },
     ])
   }
@@ -580,6 +584,7 @@ export class GlassesController {
   // --- voice -------------------------------------------------------------------------------
 
   private async startRecording() {
+    if (this.hold) return
     if (this.screen === 'answer' && this.answer?.request.kind !== 'question') return
     if ((this.screen !== 'thread' && this.screen !== 'compose' && this.screen !== 'answer') || this.sending) return
     if (this.recorder.busy && !this.recorder.paused) return
@@ -613,6 +618,14 @@ export class GlassesController {
       delete this.answer.chosen[q.id]
       return this.nextQuestion()
     }
+    // Three seconds to change your mind; a double tap in this window cancels the send.
+    const hold = startSendHold(() => void this.refresh())
+    this.hold = hold
+    void this.refresh() // the first tick fired before `this.hold` was set
+    const go = await hold.done
+    this.hold = null
+    if (!go) return this.showNotice('Cancelled. Nothing was sent.', 3000)
+
     this.sending = true
     await this.refresh()
     try {
@@ -684,7 +697,13 @@ export class GlassesController {
     const any = (type: EventType) => sys === type || text === type || list === type
 
     if (any(T.SYSTEM_EXIT_EVENT) || any(T.ABNORMAL_EXIT_EVENT)) {
+      this.hold?.cancel()
       void this.cancelRecording()
+      return
+    }
+    // During the grace period everything is ignored except the double tap that cancels the send.
+    if (this.hold) {
+      if (any(T.DOUBLE_CLICK_EVENT)) this.hold.cancel()
       return
     }
     // Something else took the screen (a notification, the Even menu): pause, don't lose the recording.
