@@ -1,0 +1,25 @@
+{
+  "package_id": "how.raj.t3g2",
+  "edition": "202601",
+  "name": "T3 G2",
+  "version": "0.1.5",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Connects to your own T3 Code server to read your pinned threads and send your messages.",
+      "whitelist": [
+        "https://*.ts.net",
+        "wss://*.ts.net"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Hold the touchpad to record a voice message, which is sent to your T3 thread."
+    }
+  ],
+  "supported_languages": [
+    "en"
+  ]
+}

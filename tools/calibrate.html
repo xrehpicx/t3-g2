@@ -1,0 +1,17 @@
+<!doctype html><html><body><script type="module">
+import { waitForEvenAppBridge, CreateStartUpPageContainer, TextContainerProperty, TextContainerUpgrade } from '@evenrealities/even_hub_sdk'
+// Font calibration: each screen shows 10 glyphs, one per row, repeated 20 times. A tap advances.
+const glyphs = [...' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~', ...'●○■□★☆▲△▶▷▼▽◀◁━─│┃█▇▆▅▄▃▂▁╭╮╯╰·…—–']
+const batches = []
+for (let i = 0; i < glyphs.length; i += 10) batches.push(glyphs.slice(i, i + 10))
+const render = b => batches[b].map(g => (g === ' ' ? '|' + ' '.repeat(20) + '|' : g.repeat(20))).join('\n')
+const bridge = await waitForEvenAppBridge()
+let at = 0
+await bridge.createStartUpPageContainer(new CreateStartUpPageContainer({ containerTotalNum: 1, textObject: [new TextContainerProperty({ xPosition: 0, yPosition: 0, width: 576, height: 288, containerID: 1, containerName: 'cal', content: render(0), isEventCapture: 1, textColor: 4, paddingLength: 0, borderWidth: 0 })] }))
+bridge.onEvenHubEvent(e => {
+  if (e.audioEvent || !(e.textEvent || e.sysEvent)) return
+  at = Math.min(batches.length - 1, at + 1)
+  bridge.textContainerUpgrade(new TextContainerUpgrade({ containerID: 1, containerName: 'cal', content: render(at) }))
+})
+console.log('CAL batches', batches.length, JSON.stringify(glyphs))
+</script></body></html>

@@ -1,0 +1,42 @@
+@import "tailwindcss";
+/* even-toolkit ships React components styled with Tailwind; let Tailwind see their classes. */
+@source "../../node_modules/even-toolkit/dist/web";
+@import "even-toolkit/web/typography.css";
+@import "even-toolkit/web/utilities.css";
+
+/* Even Realities light theme (2025 design guidelines), exposed to Tailwind as utilities. */
+@theme {
+  --color-text: #232323;
+  --color-text-dim: #7b7b7b;
+  --color-text-muted: #7b7b7b;
+  --color-text-highlight: #ffffff;
+  --color-bg: #eeeeee;
+  --color-surface: #ffffff;
+  --color-surface-light: #f6f6f6;
+  --color-surface-lighter: #e4e4e4;
+  --color-border: #e4e4e4;
+  --color-border-light: #eeeeee;
+  --color-accent: #232323;
+  --color-accent-alpha: rgba(35, 35, 35, 0.08);
+  --color-accent-warning: #fef991;
+  --color-positive: #4bb956;
+  --color-positive-alpha: rgba(75, 185, 86, 0.15);
+  --color-negative: #ff453a;
+  --color-negative-alpha: rgba(255, 69, 58, 0.15);
+  --color-overlay: rgba(0, 0, 0, 0.5);
+  --color-input-bg: rgba(35, 35, 35, 0.08);
+  --radius-default: 6px;
+  --font-display: "FK Grotesk Neue", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-body: "FK Grotesk Neue", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html, body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  -webkit-text-size-adjust: 100%;
+  touch-action: manipulation;
+  overscroll-behavior: none;
+}
