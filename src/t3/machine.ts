@@ -1,6 +1,10 @@
 import type { Net } from '../net'
 import { applyEvent, currentStep, fromSnapshot as liveFromSnapshot, type ThreadEvent, type ThreadLive } from './activity'
 import { AuthError, fetchThread } from './http'
+import {
+  DIAGNOSTICS_SCOPE, emptyInsights, hasScope, PROVIDERS_SCOPE, readHost, readLimits, readScheduled, readUsage,
+  useResetCredit, type Insights,
+} from './insights'
 import { launchThread, type LaunchInput } from './launch'
 import { isBusy, isGlassesThread, isOtherThread, toPinned } from './pinned'
 import { rpc, warmRpc } from './rpc'
@@ -46,6 +50,8 @@ interface Watched {
 const FALLBACK_POLL_MS = 10_000
 const THREAD_FALLBACK_POLL_MS = 4_000
 const STREAM_GRACE_MS = 8_000
+/** How long each part of the dashboard and usage data stays fresh. */
+const INSIGHT_TTL: Record<keyof Insights, number> = { host: 15_000, limits: 60_000, scheduled: 60_000, usage: 120_000 }
 
 /** One paired T3 server: its live thread feed, plus everything we ask of it. */
 export class Machine {
@@ -58,6 +64,8 @@ export class Machine {
   private firstSnapshot = true
   private configCache: Promise<ServerConfig> | null = null
   private watched = new Map<string, Watched>()
+  insights: Insights = emptyInsights()
+  private insightAt: Partial<Record<keyof Insights, number>> = {}
 
   constructor(
     private readonly net: Net,
@@ -168,6 +176,36 @@ export class Machine {
     if (!live) return undefined
     const reply = live.messages.findLast(m => m.role === 'assistant' && m.text.trim())
     return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null }
+  }
+
+  /**
+   * Refreshes whatever part of the dashboard and usage data has gone stale. Cheap to call often: each
+   * part has its own lifetime, and parts the pairing has no scope for are marked missing, not fetched.
+   */
+  refreshInsights(force = false) {
+    const now = Date.now()
+    const due = (part: keyof Insights) => force || now - (this.insightAt[part] ?? 0) > INSIGHT_TTL[part]
+    const load = <K extends keyof Insights>(part: K, read: () => Promise<Insights[K]>) => {
+      if (!due(part)) return
+      this.insightAt[part] = now
+      void read()
+        .then(value => { this.insights = { ...this.insights, [part]: value } })
+        .catch(error => { this.insights = { ...this.insights, [part]: { missing: error instanceof Error ? error.message : 'Unavailable' } } })
+        .finally(() => this.onChange())
+    }
+    load('host', () => readHost(this.net, this.session))
+    load('limits', () => readLimits(this.net, this.session))
+    load('scheduled', () => readScheduled(this.net, this.session))
+    if (hasScope(this.session, DIAGNOSTICS_SCOPE)) load('usage', () => readUsage(this.net, this.session))
+    else this.insights = { ...this.insights, usage: { missing: `needs ${DIAGNOSTICS_SCOPE}` } }
+  }
+
+  get canReset() { return hasScope(this.session, PROVIDERS_SCOPE) }
+
+  async resetLimit(instanceId: string) {
+    const result = await this.guard(() => useResetCredit(this.net, this.session, instanceId))
+    this.refreshInsights(true)
+    return result
   }
 
   /** Open threads that are not pinned, most recently changed first. */

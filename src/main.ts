@@ -44,6 +44,10 @@ if (hash.has('showcase') || (hash.has('demo') && !fleet.demoActive)) {
   await fleet.startDemo(hash.has('showcase'))
 }
 
+// #page=<page id> opens the glasses on that page (for screenshots): pinned, chats, dashboard, usage, or thread:<machine>:<thread>.
+const startPage = hash.get('page')
+if (startPage && fleet.state.settings.pages.includes(startPage as never)) await fleet.updateSettings({ startPage: startPage as never })
+
 if (bridge) await new GlassesController(sdk, bridge, fleet, store).start()
 
 // #open=<thread id> does what tapping that thread on the phone page does (for testing the handoff).

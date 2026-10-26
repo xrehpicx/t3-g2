@@ -211,6 +211,17 @@ export function listHeader(threads: PinnedThread[], machines: HeaderMachine[]): 
   return { left, right }
 }
 
+/** The Chats page header: how many open threads are not pinned, and how many have a new reply. */
+export function chatsHeader(threads: PinnedThread[], unread: (t: PinnedThread) => boolean): string {
+  const fresh = threads.filter(t => markFor(t.status, t.needsInput, unread(t)) === 'new').length
+  const ask = threads.filter(t => markFor(t.status, t.needsInput, false) === 'ask').length
+  return [
+    threads.length ? `${threads.length} other ${threads.length === 1 ? 'chat' : 'chats'}` : 'No other chats',
+    ask ? `${MARK.ask} ${ask}` : '',
+    fresh ? `${MARK.new} ${fresh} new` : '',
+  ].filter(Boolean).join('   ')
+}
+
 /**
  * A scrollbar as two layers drawn in the same place: a dim `│` track on every row, and the same thin
  * glyph bright where the thumb is. Brightness, not a block glyph, marks the position. Empty when

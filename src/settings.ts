@@ -20,9 +20,58 @@ export interface NewThreadSettings {
   clock: ClockFormat
   /** Shown beside each thread title in the glasses list. */
   listFields: ListField[]
+  /** Pages shown on the glasses, and the one the app opens on. */
+  pages: Page[]
+  startPage: Page
+  threadPages: ThreadPage[]
 }
 
 export type Density = 'comfortable' | 'compact'
+
+/** The glasses' built-in top-level pages, in the order they cycle. */
+export type BuiltinPage = 'pinned' | 'chats' | 'dashboard' | 'usage'
+
+/** A page is a built-in one, or `thread:<machine>:<thread>`: a thread whose latest reply is the page. */
+export type Page = BuiltinPage | `thread:${string}`
+
+/** A page made by a thread: the thread keeps it up to date, and you change it by talking to the thread. */
+export interface ThreadPage {
+  id: `thread:${string}`
+  machineId: string
+  threadId: string
+  title: string
+}
+
+export const threadPageId = (machineId: string, threadId: string): ThreadPage['id'] => `thread:${machineId}:${threadId}`
+export const isThreadPage = (page: Page): page is ThreadPage['id'] => page.startsWith('thread:')
+
+export const PAGES: Array<{ value: BuiltinPage; label: string; hint: string }> = [
+  { value: 'pinned', label: 'Pinned', hint: 'Your pinned threads.' },
+  { value: 'chats', label: 'Chats', hint: 'Every other open thread, newest first.' },
+  { value: 'dashboard', label: 'Dashboard', hint: 'What needs you, what is running, your machines, spend and limits.' },
+  { value: 'usage', label: 'Usage', hint: 'Plan limits with reset credits, and token spend by model.' },
+]
+
+/** Enabled pages: built-ins in their fixed order, then thread pages in the order they were added. At least one. */
+export function normalizePages(raw: unknown, threadPages: ThreadPage[] = []): Page[] {
+  if (!Array.isArray(raw)) return [...PAGES.map(p => p.value), ...threadPages.map(p => p.id)]
+  const pages: Page[] = [...PAGES.map(p => p.value).filter(v => raw.includes(v)), ...threadPages.map(p => p.id).filter(id => raw.includes(id))]
+  return pages.length ? pages : ['pinned']
+}
+
+function normalizeThreadPages(raw: unknown): ThreadPage[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  return raw.flatMap(p => {
+    if (!p || typeof p !== 'object') return []
+    const { machineId, threadId, title } = p as Record<string, unknown>
+    if (typeof machineId !== 'string' || typeof threadId !== 'string' || !machineId || !threadId) return []
+    const id = threadPageId(machineId, threadId)
+    if (seen.has(id)) return []
+    seen.add(id)
+    return [{ id, machineId, threadId, title: typeof title === 'string' && title ? title : 'Page' }]
+  })
+}
 
 /** What the thread list shows beside each title. Shown in this order, joined with " · ". */
 export type ListField = 'activity' | 'reply' | 'project' | 'machine'
@@ -73,6 +122,9 @@ export const DEFAULT_SETTINGS: NewThreadSettings = {
   density: 'comfortable',
   clock: '12h',
   listFields: DEFAULT_LIST_FIELDS,
+  pages: ['pinned', 'chats', 'dashboard', 'usage'],
+  startPage: 'pinned',
+  threadPages: [],
 }
 
 const KEY = 't3g2.settings'
@@ -93,8 +145,26 @@ export function normalizeSettings(raw: unknown): NewThreadSettings {
     density: o.density === 'compact' ? 'compact' : 'comfortable',
     clock: CLOCKS.some(c => c.value === o.clock) ? (o.clock as ClockFormat) : DEFAULT_SETTINGS.clock,
     listFields: normalizeListFields(o.listFields),
+    ...pagesOf(o.pages, o.startPage, normalizeThreadPages(o.threadPages)),
   }
 }
+
+function pagesOf(rawPages: unknown, rawStart: unknown, threadPages: ThreadPage[]) {
+  const pages = normalizePages(rawPages, threadPages)
+  return { pages, threadPages, startPage: pages.includes(rawStart as Page) ? (rawStart as Page) : pages[0] }
+}
+
+/**
+ * Sent when a thread is made into a page. The page shows only the thread's latest reply, so every reply
+ * has to be the whole page, sized for the glasses.
+ */
+export const PAGE_PROMPT =
+  'This thread is a live page on my Even G2 glasses. The page shows only your latest reply, on a small ' +
+  'screen: 8 lines of about 50 characters. So every reply you write is the complete page: plain text, one ' +
+  'short item per line, no markdown, tables, code blocks or html_render. When I ask for a change, reply with ' +
+  'the whole updated page. If the page should stay current, use schedule_task (bound to this thread) on a ' +
+  'sensible interval, or a webhook trigger for events; each run gathers fresh data and replies with the full ' +
+  'page. What I want on the page:'
 
 export async function loadSettings(store: Store): Promise<NewThreadSettings> {
   const raw = await store.get(KEY)

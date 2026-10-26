@@ -1,11 +1,11 @@
 import type { Net } from './net'
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, type NewThreadSettings } from './settings'
+import { DEFAULT_SETTINGS, loadSettings, normalizePages, PAGE_PROMPT, saveSettings, threadPageId, type NewThreadSettings, type Page, type ThreadPage } from './settings'
 import { CANDIDATE_ORIGINS } from './config'
 import { diagnose, type DiagStep } from './t3/diagnose'
 import { exchangePairing, fetchDescriptor, type Descriptor } from './t3/http'
 import { canOperate } from './t3/launch'
 import { askingFirst } from './t3/pinned'
-import { DEMO_ID, DemoMachine } from './t3/demo'
+import { DEMO_ID, DEMO_PAGE_THREAD, DemoMachine } from './t3/demo'
 import { Machine, type LinkState, type MachineRecord } from './t3/machine'
 import { parsePairing } from './t3/pairing'
 import { sessionExpired, type Store } from './t3/session'
@@ -149,6 +149,10 @@ export class Fleet {
     this.attachDemo(showcase)
     if (!this.state.defaultMachineId || !this.machines.has(this.state.defaultMachineId)) this.state = { ...this.state, defaultMachineId: DEMO_ID }
     await this.store.set(DEMO_KEY, showcase ? 'showcase' : '1')
+    // The demo comes with one page made by a thread, so that feature can be tried without a server.
+    const page = { id: threadPageId(DEMO_ID, DEMO_PAGE_THREAD), machineId: DEMO_ID, threadId: DEMO_PAGE_THREAD, title: 'PRs & deploys' }
+    const { threadPages, pages } = this.state.settings
+    if (!threadPages.some(p => p.id === page.id)) await this.updateSettings({ threadPages: [...threadPages, page], pages: [...pages, page.id] })
     await this.persist()
     this.recompute(true)
   }
@@ -204,6 +208,52 @@ export class Fleet {
     this.recompute(true)
   }
 
+  /** Shows or hides a page on the glasses. The last page cannot be hidden. */
+  async setPageEnabled(page: Page, on: boolean) {
+    const { pages, threadPages, startPage } = this.state.settings
+    const next = normalizePages(on ? [...pages, page] : pages.filter(p => p !== page), threadPages)
+    if (!on && next.length === pages.length) return // it was the only one
+    await this.updateSettings({ pages: next, startPage: next.includes(startPage) ? startPage : next[0] })
+  }
+
+  /** Makes a thread into a glasses page, telling it how to write one. */
+  async adoptPage(machineId: string, threadId: string) {
+    const machine = this.machines.get(machineId)
+    const thread = machine?.thread(threadId)
+    if (!machine || !thread) throw new Error('That thread is no longer available.')
+    await machine.sendText(thread, `${PAGE_PROMPT} keep showing what this thread is about.`)
+    await this.addPage({ id: threadPageId(machineId, threadId), machineId, threadId, title: thread.title })
+  }
+
+  /** Starts a thread that builds a page from a description. */
+  async makePage(description: string) {
+    const machine = this.defaultMachine
+    if (!machine) throw new Error('No T3 machine paired.')
+    const title = `Glasses page: ${description.slice(0, 40)}`
+    const threadId = await machine.launch({ settings: this.state.settings, title, text: `${PAGE_PROMPT}\n\n${description}` })
+    await this.addPage({ id: threadPageId(machine.id, threadId), machineId: machine.id, threadId, title: description.slice(0, 24) })
+  }
+
+  private async addPage(page: ThreadPage) {
+    const { threadPages, pages } = this.state.settings
+    if (threadPages.some(p => p.id === page.id)) return
+    await this.updateSettings({ threadPages: [...threadPages, page], pages: [...pages, page.id] })
+  }
+
+  async removePage(id: Page) {
+    const { threadPages, pages, startPage } = this.state.settings
+    const nextPages = normalizePages(pages.filter(p => p !== id), threadPages.filter(p => p.id !== id))
+    await this.updateSettings({
+      threadPages: threadPages.filter(p => p.id !== id),
+      pages: nextPages,
+      startPage: nextPages.includes(startPage) ? startPage : nextPages[0],
+    })
+  }
+
+  async renamePage(id: Page, title: string) {
+    await this.updateSettings({ threadPages: this.state.settings.threadPages.map(p => (p.id === id ? { ...p, title } : p)) })
+  }
+
   async updateSettings(patch: Partial<NewThreadSettings>) {
     const settings = { ...this.state.settings, ...patch }
     this.state = { ...this.state, settings }
@@ -223,7 +273,8 @@ export class Fleet {
       this.flush = undefined
       const machines = [...this.machines.values()]
       const threads = askingFirst(machines.flatMap(m => m.pinned()))
-      const others = machines.flatMap(m => m.others()).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      const pageThreads = new Set(this.state.settings.threadPages.map(p => p.id))
+      const others = machines.flatMap(m => m.others()).filter(t => !pageThreads.has(threadPageId(t.machineId, t.id))).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       this.state = {
         ...this.state,
         phase: this.state.phase === 'loading' && !immediate ? 'loading' : machines.length ? 'ready' : 'unpaired',

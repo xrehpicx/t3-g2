@@ -40,6 +40,19 @@ describe('settings', () => {
     expect(normalizeSettings({ listFields: [] }).listFields).toEqual([])
     expect(normalizeSettings({ listFields: 'activity' }).listFields).toEqual(['activity', 'machine'])
   })
+  it('enables every built-in page by default and opens on Pinned', () => {
+    expect(normalizeSettings({}).pages).toEqual(['pinned', 'chats', 'dashboard', 'usage'])
+    expect(normalizeSettings({}).startPage).toBe('pinned')
+  })
+  it('keeps at least one page, a valid start page, and thread pages that are known', () => {
+    expect(normalizeSettings({ pages: [] }).pages).toEqual(['pinned'])
+    expect(normalizeSettings({ pages: ['usage', 'dashboard'], startPage: 'pinned' })).toMatchObject({ pages: ['dashboard', 'usage'], startPage: 'dashboard' })
+    const threadPages = [{ machineId: 'm', threadId: 't', title: 'PRs' }, { machineId: 'm', threadId: 't', title: 'dupe' }, { threadId: 'bad' }]
+    const s = normalizeSettings({ pages: ['thread:m:t', 'thread:m:gone', 'pinned'], threadPages, startPage: 'thread:m:t' })
+    expect(s.threadPages).toEqual([{ id: 'thread:m:t', machineId: 'm', threadId: 't', title: 'PRs' }])
+    expect(s.pages).toEqual(['pinned', 'thread:m:t'])
+    expect(s.startPage).toBe('thread:m:t')
+  })
   it('defaults to comfortable density and keeps compact', () => {
     expect(normalizeSettings({}).density).toBe('comfortable')
     expect(normalizeSettings({ density: 'compact' }).density).toBe('compact')

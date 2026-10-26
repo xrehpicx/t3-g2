@@ -10,7 +10,7 @@ import { CANDIDATE_ORIGINS, DEFAULT_SERVER } from '../config'
 import type { Fleet, FleetState, FoundMachine } from '../fleet'
 import { clock, markFor, MARK } from '../glasses/screens'
 import { SEND_DELAYS } from '../audio/hold'
-import { CLOCKS, DEFAULT_SETTINGS, LIST_FIELDS, REPLY_FIT, DENSITIES, RUNTIME_MODES, type ClockFormat, type Density, type ListField, type RuntimeMode } from '../settings'
+import { CLOCKS, DEFAULT_SETTINGS, isThreadPage, LIST_FIELDS, PAGES, REPLY_FIT, DENSITIES, RUNTIME_MODES, type ClockFormat, type Density, type ListField, type Page, type RuntimeMode } from '../settings'
 import type { DiagStep } from '../t3/diagnose'
 import { SCRATCH } from '../t3/launch'
 import type { ServerConfig } from '../t3/serverConfig'
@@ -28,6 +28,68 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (on: boolea
     >
       <span className={`absolute top-1 left-1 h-4 w-4 bg-white transition-transform duration-200 ${checked ? 'translate-x-4' : ''}`} />
     </button>
+  )
+}
+
+/** Which pages the glasses have, which one they open on, and pages made by threads. */
+function PagesSection({ fleet, state, onToast }: { fleet: Fleet; state: FleetState; onToast: (t: { text: string; ok: boolean }) => void }) {
+  const s = state.settings
+  const [idea, setIdea] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [adopt, setAdopt] = useState('')
+  const label = (page: Page) => (isThreadPage(page) ? s.threadPages.find(p => p.id === page)?.title ?? 'Page' : PAGES.find(p => p.value === page)?.label ?? page)
+  const candidates = [...state.threads, ...state.others].filter(t => !s.threadPages.some(p => p.machineId === t.machineId && p.threadId === t.id))
+  const run = async (work: () => Promise<void>, done: string) => {
+    setBusy(true)
+    try { await work(); onToast({ text: done, ok: true }) } catch (error) { onToast({ text: error instanceof Error ? error.message : String(error), ok: false }) }
+    setBusy(false)
+  }
+  return (
+    <Section label="Glasses pages">
+      {PAGES.map(p => (
+        <Row key={p.value} label={p.label} hint={p.hint}>
+          <Toggle checked={s.pages.includes(p.value)} onChange={on => void fleet.setPageEnabled(p.value, on)} />
+        </Row>
+      ))}
+      {s.threadPages.map(p => (
+        <div key={p.id} className="bg-surface px-4 py-3">
+          <div className="flex items-center gap-3">
+            <Input value={p.title} onChange={e => void fleet.renamePage(p.id, e.target.value)} aria-label="Page name" className="min-w-0 flex-1" />
+            <Toggle checked={s.pages.includes(p.id)} onChange={on => void fleet.setPageEnabled(p.id, on)} />
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-3 text-[13px] text-text-dim">
+            <span className="truncate">Made by a thread · {state.machines.find(m => m.id === p.machineId)?.label ?? 'unpaired machine'}</span>
+            <Button size="sm" variant="ghost" onClick={() => void fleet.removePage(p.id)}>Remove</Button>
+          </div>
+        </div>
+      ))}
+      <Row label="Open on" hint="The page the glasses show first. Tap, then hold, on the glasses to switch pages; double tap goes back here.">
+        <Select value={s.startPage} options={s.pages.map(p => ({ value: p, label: label(p) }))} onValueChange={startPage => void fleet.updateSettings({ startPage: startPage as Page })} />
+      </Row>
+      <div className="bg-surface p-3">
+        <p className="mb-2 text-[13px] text-text-dim">
+          Make your own page: say what it should show, and a thread builds it and keeps it up to date. Change it later by holding to talk on that page.
+        </p>
+        <Textarea value={idea} onChange={e => setIdea(e.target.value)} rows={2} placeholder="My open PRs and CI status, refreshed every 15 minutes" aria-label="What the new page should show" />
+        <div className="mt-2 flex justify-end">
+          <Button size="sm" disabled={!idea.trim() || busy} onClick={() => void run(async () => { await fleet.makePage(idea.trim()); setIdea('') }, 'Page added. Its thread is building it now.')}>Make page</Button>
+        </div>
+      </div>
+      {candidates.length > 0 && (
+        <Row label="Use a thread" hint="Turns an existing thread into a page. It gets a short note on how to write for the glasses.">
+          <Select
+            value={adopt}
+            placeholder="Pick a thread"
+            options={candidates.slice(0, 30).map(t => ({ value: `${t.machineId}\u0000${t.id}`, label: t.title }))}
+            onValueChange={v => {
+              setAdopt(v)
+              const [machineId, threadId] = v.split('\u0000')
+              void run(() => fleet.adoptPage(machineId, threadId), 'Page added.').then(() => setAdopt(''))
+            }}
+          />
+        </Row>
+      )}
+    </Section>
   )
 }
 
@@ -306,6 +368,8 @@ export function App({ fleet }: { fleet: Fleet }) {
         </Section>
       )}
 
+      {state.machines.length > 0 && <PagesSection fleet={fleet} state={state} onToast={setToast} />}
+
       {state.machines.length > 0 && (
         <Section label="Glasses display">
           <Row label="Density" hint="The glasses use one fixed font size, so this changes how much fits instead. Compact removes the gaps between chat messages.">
@@ -379,7 +443,7 @@ export function App({ fleet }: { fleet: Fleet }) {
         {!fleet.demoActive && <ListItem title="Try the demo" subtitle="Sample threads, no server needed" onPress={() => void fleet.startDemo()} />}
       </Section>
       <p className="mt-3 px-1 text-[13px] text-text-dim">
-        Get a pairing code on the machine running T3: <code className="font-mono">t3 auth pairing create --scope orchestration:read --scope orchestration:operate</code>
+        Get a pairing code on the machine running T3: <code className="font-mono">t3 auth pairing create --scope orchestration:read --scope orchestration:operate --scope diagnostics:read --scope providers:manage</code>. The last two are optional: spend on the Usage page, and using reset credits.
         {state.machines.length > 0 && ' · Swipe a machine left to remove it.'}
       </p>
 

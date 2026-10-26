@@ -1,5 +1,6 @@
 import type { Net } from '../net'
 import { currentStep, type PendingRequest, type ThreadLive } from './activity'
+import type { Insights, ResetOutcome } from './insights'
 import type { LaunchInput } from './launch'
 import { Machine, type Glance, type OpenThread } from './machine'
 import type { ServerConfig } from './serverConfig'
@@ -7,6 +8,8 @@ import { fromSnapshot } from './shellStore'
 import type { ThreadMessage, ThreadShell, ThreadStatus } from './types'
 
 export const DEMO_ID = 'demo'
+/** A demo thread that keeps a glasses page, shown as a page in the demo. */
+export const DEMO_PAGE_THREAD = 'p1'
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
 const MIN = 60_000
@@ -141,6 +144,22 @@ export class DemoMachine extends Machine {
     })
     const unpinned = { pinnedAt: null, pinOrderKey: null }
     add({
+      shell: thread(DEMO_PAGE_THREAD, 'Glasses page: PRs and deploys', 'completed', 'web', 6 * MIN, unpinned),
+      messages: [
+        message('user', 'Show my open PRs waiting on review, CI status, and the last deploy. Refresh every 15 minutes.', 2 * 60 * MIN),
+        message('assistant', [
+          'PRs waiting on review (3)',
+          '  #482 Stripe iframe ready event · 2 approvals',
+          '  #479 Billing v2 client · changes requested',
+          '  #471 Edge cache for product pages · new',
+          'CI on main: green · 4m 12s',
+          'Last deploy: web 2.4.0-rc2 · 38 min ago · healthy',
+          'Next refresh in 9 min',
+        ].join('\n'), 6 * MIN),
+      ],
+      steps: [],
+    })
+    add({
       shell: thread('o1', 'Spike: cache product pages at the edge', 'completed', 'web', 3 * 60 * MIN, unpinned),
       messages: [message('user', 'How much would edge caching help the product pages?', 4 * 60 * MIN), message('assistant', 'About 60% of requests are cacheable. A 5 minute TTL would cut origin load by half.', 3 * 60 * MIN)],
       steps: [],
@@ -176,6 +195,47 @@ export class DemoMachine extends Machine {
   override stop() { clearInterval(this.timer) }
   override async poll() { this.changed() }
   override warm() {}
+
+  private demoCredits = 1
+  /** Sample limits, spend and host numbers, so the dashboard and usage pages have something to show. */
+  override refreshInsights() {
+    const week = new Date(Date.now() + 4 * 86_400_000 + 3 * 3_600_000).toISOString()
+    const session = new Date(Date.now() + 2 * 3_600_000 + 14 * 60_000).toISOString()
+    const next: Insights = {
+      limits: [
+        { instanceId: 'codex', name: 'Codex', credits: this.demoCredits, unavailable: null, windows: [
+          { id: 'primary', kind: 'session', label: '5 hours', usedPercent: this.demoCredits ? 82 : 0, resetsAt: session },
+          { id: 'weekly', kind: 'weekly', label: 'Weekly', usedPercent: 35, resetsAt: week },
+        ] },
+        { instanceId: 'claudeAgent', name: 'Claude', credits: 0, unavailable: null, windows: [
+          { id: 'weekly', kind: 'weekly', label: 'Weekly', usedPercent: 61, resetsAt: week },
+        ] },
+        { instanceId: 'cursor', name: 'Cursor', credits: 0, unavailable: 'unsupported', windows: [] },
+      ],
+      usage: {
+        today: { costUsd: 42.18, tokens: 18_400_000, cachedShare: 0.94 },
+        week: { costUsd: 512.4, tokens: 241_000_000, cachedShare: 0.96 },
+        models: [
+          { model: 'claude-opus-5-5', costUsd: 468.2, tokens: 214_000_000 },
+          { model: 'gpt-5.5', costUsd: 31.9, tokens: 19_000_000 },
+          { model: 'claude-sonnet-5-5', costUsd: 12.3, tokens: 8_000_000 },
+        ],
+      },
+      host: { cpu: 0.19, usedMemoryBytes: 26.8e9, totalMemoryBytes: 38.6e9 },
+      scheduled: [{ title: 'Nightly dependency bump', nextRunAt: new Date(Date.now() + 2 * 3_600_000 + 20 * 60_000).toISOString() }],
+    }
+    if (JSON.stringify(next.limits) !== JSON.stringify(this.insights.limits) || !this.insights.host) {
+      this.insights = next
+      queueMicrotask(() => this.changed())
+    }
+  }
+  override get canReset() { return true }
+  override async resetLimit(): Promise<{ outcome: ResetOutcome }> {
+    if (!this.demoCredits) return { outcome: 'noCredit' }
+    this.demoCredits = 0
+    this.refreshInsights()
+    return { outcome: 'reset' }
+  }
   override watch() {}
   override glance(id: string): Glance | undefined {
     const t = this.threads.get(id)
@@ -226,6 +286,15 @@ export class DemoMachine extends Machine {
     this.touch(t, 'running')
     this.emit(t.shell.id)
     this.reply(t, 'This is demo mode, so your voice message stayed on this device. Pair a T3 machine on your phone to talk to a real agent.')
+  }
+
+  override async sendText(target: { id: string }, text: string) {
+    const t = this.threads.get(target.id)
+    if (!t) throw new Error('This thread is no longer available.')
+    t.messages = [...t.messages, message('user', text)]
+    this.touch(t, 'running')
+    this.emit(t.shell.id)
+    this.reply(t, 'Demo page\nOn a real machine the agent would fill this in\nand keep it up to date.')
   }
 
   /** Answering in demo mode clears the request and gets a short reply. */

@@ -26,6 +26,21 @@ export function textWidth(text: string): number {
 /** Glyphs the font would silently drop are replaced so the text reads the same. */
 export const renderable = (text: string) => text.replace(/`/g, "'").replace(/\t/g, '  ')
 
+/** Like `fitWidth`, but keeps runs of spaces, so space-padded columns stay lined up. */
+export function clipWidth(text: string, widthPx: number): string {
+  const clean = renderable(text).replace(/\s+$/, '')
+  if (textWidth(clean) <= widthPx - SAFETY_PX) return clean
+  const budget = widthPx - SAFETY_PX - charWidth('…')
+  let out = ''
+  let used = 0
+  for (const char of clean) {
+    if (used + charWidth(char) > budget) break
+    out += char
+    used += charWidth(char)
+  }
+  return `${out.trimEnd()}…`
+}
+
 /** Truncates to `maxPx`, ending in an ellipsis when cut. */
 export function fitWidth(text: string, widthPx: number): string {
   const maxPx = widthPx - SAFETY_PX
