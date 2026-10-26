@@ -5,7 +5,7 @@ import { launchThread, type LaunchInput } from './launch'
 import { isGlassesThread, toPinned } from './pinned'
 import { rpc, warmRpc } from './rpc'
 import { parseServerConfig, type ServerConfig } from './serverConfig'
-import { sendTextMessage, sendVoiceMessage } from './send'
+import { respondToRequest, sendTextMessage, sendVoiceMessage, type RequestResponse } from './send'
 import type { Session } from './session'
 import { applyShellItem, emptyShell, type ShellItem, type ShellState } from './shellStore'
 import { openStream, type StreamHandle } from './stream'
@@ -175,6 +175,10 @@ export class Machine {
 
   sendVoice(thread: { id: string; status: ThreadStatus }, wav: Uint8Array, prompt: string) {
     return this.guard(() => sendVoiceMessage(this.net, this.session, thread, wav, prompt))
+  }
+
+  respond(threadId: string, requestId: string, response: RequestResponse) {
+    return this.guard(() => respondToRequest(this.net, this.session, threadId, requestId, response))
   }
 
   sendText(thread: { id: string; status: ThreadStatus }, text: string) {

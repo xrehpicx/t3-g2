@@ -108,6 +108,17 @@ describe('chat lines', () => {
     expect(lines.filter(Boolean)).toHaveLength(MAX_MESSAGES)
     expect(lines.at(-1)).toBe('m39')
   })
+  it('shows a message from another agent as one line with the sending thread name', () => {
+    const fromAgent: ThreadMessage = { ...msg('user', 'GATE2 → DESK: #6707 not merged yet because the proof heading is missing'), createdBy: 'agent', senderThreadId: 't9' }
+    const lines = chatLines([fromAgent, msg('assistant', 'On it.')], TEXT_W, MAX_MESSAGES, id => (id === 't9' ? 'Keel gate runner 2' : undefined))
+    expect(lines[0].startsWith('▷ Keel gate runner 2: GATE2 → DESK')).toBe(true)
+    expect(textWidth(lines[0])).toBeLessThanOrEqual(TEXT_W)
+    expect(lines.slice(1)).toEqual(['', 'On it.'])
+  })
+  it('falls back to "agent" when the sending thread is unknown', () => {
+    const lines = chatLines([{ ...msg('user', 'hi'), createdBy: 'agent' }])
+    expect(lines).toEqual(['▷ agent: hi'])
+  })
   it('collapses our voice prompt', () => {
     expect(chatLines([msg('user', 'Voice message from my Even G2 glasses, attached...')])).toEqual(['> (voice message)'])
   })
@@ -126,5 +137,38 @@ describe('live indicators', () => {
     expect(titleBadge('run', 65_000)).toBe('▶ 1:05')
     expect(titleBadge('ask', null)).toBe('★ needs you')
     expect(clock(3_725_000)).toBe('1:02:05')
+  })
+})
+
+import { approvalView, choiceLayers, DONE_KEY, questionView } from './screens'
+
+describe('answer screens', () => {
+  const q = { header: 'Library', question: 'Which charting library should we use?', options: [{ label: 'Recharts', description: '98 kB' }, { label: 'Visx' }] }
+  it('shows a single-choice question with radio marks and the header on the side', () => {
+    const v = questionView(q, 0, 2, ['Visx'], false)
+    expect(v.head).toBe('★ Question 1 of 2')
+    expect(v.side).toBe('Library')
+    expect(v.prompt).toEqual(['Which charting library should we use?'])
+    expect(v.rows.map(r => `${r.mark} ${r.label}`)).toEqual(['○ Recharts', '● Visx'])
+  })
+  it('adds checkboxes and a Done row for multi-select', () => {
+    const v = questionView({ ...q, multiSelect: true }, 1, 2, ['Recharts'], false)
+    expect(v.rows.map(r => r.mark)).toEqual(['■', '□', '▶'])
+    expect(v.rows.at(-1)).toMatchObject({ key: DONE_KEY, label: 'Done (1)' })
+  })
+  it('says when the answer was given by voice', () => {
+    expect(questionView(q, 0, 1, [], true).side).toBe('● answered by voice')
+    expect(questionView(q, 0, 1, [], false).head).toBe('★ Question')
+  })
+  it('shows approvals with their options and a muted deny', () => {
+    const v = approvalView('Run a command?', 'pnpm db:migrate', [{ decision: 'accept', label: 'Allow' }, { decision: 'decline', label: 'Deny' }])
+    expect(v.head).toBe('★ Run a command?')
+    expect(v.rows.map(r => `${r.mark} ${r.label}`)).toEqual(['▶ Allow', '□ Deny'])
+  })
+  it('lays choices out one per line, cursor row bright, details only when they fit', () => {
+    const v = questionView(q, 0, 1, [], false)
+    const { dim, bright } = choiceLayers(v.rows, 1, 0, 5)
+    expect(dim.split('\n')).toEqual(['○ Recharts   98 kB', ''])
+    expect(bright.split('\n')).toEqual(['', '○ Visx'])
   })
 })

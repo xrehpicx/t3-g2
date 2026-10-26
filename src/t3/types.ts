@@ -39,6 +39,10 @@ export interface ThreadMessage {
   text: string
   streaming: boolean
   createdAt: string
+  /** 'agent' when another thread's agent wrote this user-role message. */
+  createdBy?: 'user' | 'agent' | 'system' | string
+  /** The thread that sent it, for agent-to-agent messages. */
+  senderThreadId?: string
 }
 
 export interface ThreadBounded {

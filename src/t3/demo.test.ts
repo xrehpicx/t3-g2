@@ -55,4 +55,23 @@ describe('DemoMachine', () => {
     expect(demo.thread(id)?.status).toBe('completed')
     demo.stop()
   })
+
+  it('has a question and an approval to answer, and clears them when answered', async () => {
+    const demo = new DemoMachine(net, () => {})
+    demo.start()
+    let live: ThreadLive | null = null
+    demo.openThread('d7', l => { live = l })
+    await vi.advanceTimersByTimeAsync(10)
+    const request = (live as unknown as ThreadLive).requests[0]
+    expect(request.kind).toBe('question')
+    await demo.respond('d7', request.requestId, { answers: { lib: 'Visx', charts: ['Line', 'Bar'] } })
+    expect((live as unknown as ThreadLive).requests).toEqual([])
+    expect((live as unknown as ThreadLive).messages.some(m => m.text === 'Visx · Line, Bar')).toBe(true)
+    expect(demo.thread('d7')?.needsInput).toBe(false)
+
+    demo.openThread('d2', l => { live = l })
+    await vi.advanceTimersByTimeAsync(10)
+    expect((live as unknown as ThreadLive).requests[0]).toMatchObject({ kind: 'approval', what: 'Run a command?' })
+    demo.stop()
+  })
 })

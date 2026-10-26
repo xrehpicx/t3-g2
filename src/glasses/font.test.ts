@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fitWidth, renderable, textWidth, wrapWidth } from './font'
+import { fitWidth, renderable, SAFETY_PX, textWidth, wrapWidth } from './font'
 
 describe('font metrics', () => {
   it('sums measured advances', () => {
@@ -16,6 +16,9 @@ describe('font metrics', () => {
 })
 
 describe('fitWidth', () => {
+  it('leaves headroom at the end of the line', () => {
+    expect(textWidth(fitWidth('a'.repeat(100), 120))).toBeLessThanOrEqual(120 - SAFETY_PX)
+  })
   it('keeps text that fits', () => {
     expect(fitWidth('hello', 200)).toBe('hello')
   })
@@ -32,7 +35,7 @@ describe('wrapWidth', () => {
     for (const line of wrapWidth(text, 200)) expect(textWidth(line)).toBeLessThanOrEqual(200)
   })
   it('fills lines rather than breaking early', () => {
-    const lines = wrapWidth('aaa bbb ccc ddd', textWidth('aaa bbb'))
+    const lines = wrapWidth('aaa bbb ccc ddd', textWidth('aaa bbb') + SAFETY_PX)
     expect(lines).toEqual(['aaa bbb', 'ccc ddd'])
   })
   it('keeps blank lines between paragraphs', () => {

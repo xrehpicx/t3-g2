@@ -1,5 +1,5 @@
 import type { Net } from '../net'
-import type { ThreadLive } from './activity'
+import type { PendingRequest, ThreadLive } from './activity'
 import type { LaunchInput } from './launch'
 import { Machine, type OpenThread } from './machine'
 import type { ServerConfig } from './serverConfig'
@@ -16,6 +16,7 @@ interface DemoThread {
   messages: ThreadMessage[]
   /** Activity labels cycled while the thread is "running". */
   steps: string[]
+  requests?: PendingRequest[]
 }
 
 let nextId = 0
@@ -62,7 +63,8 @@ export class DemoMachine extends Machine {
       messages: [
         message('user', 'The checkout e2e test fails about one run in five on CI. Find out why and fix it.', 9 * MIN),
         message('assistant', 'Ran it 50 times locally and got 9 failures, all in the payment step. The test clicks Pay before the Stripe iframe finishes loading, so the click sometimes lands on a placeholder.', 6 * MIN),
-        message('user', 'Fix it without adding sleeps.', 4 * MIN),
+        message('user', 'Fix it without adding sleeps.', 5 * MIN),
+        { ...message('user', 'CI on main is blocked on this test. Ping me when it is green so I can cut the release.', 4 * MIN), createdBy: 'agent', senderThreadId: 'd3' },
         message('assistant', 'Waiting on the iframe ready event instead. Running the suite 50 more times to confirm.', 3 * MIN),
       ],
       steps: ['$ pnpm test:e2e checkout --repeat 50', 'Read tests/checkout.spec.ts', 'thinking', 'edit tests/checkout.spec.ts', 'edit src/payments/StripeFrame.tsx', '$ pnpm test:e2e checkout --repeat 50'],
@@ -74,6 +76,36 @@ export class DemoMachine extends Machine {
         message('assistant', 'All 14 call sites are on v2 and the tests pass. Next step runs the invoices table migration, which needs your approval.', 4 * MIN),
       ],
       steps: [],
+      requests: [{
+        kind: 'approval', requestId: 'r-d2', itemId: 'i-d2', what: 'Run a command?',
+        detail: 'pnpm db:migrate --env staging  (adds a currency column to invoices, about 40k rows)',
+        options: [{ decision: 'accept', label: 'Allow' }, { decision: 'acceptForSession', label: 'Allow for this session' }, { decision: 'decline', label: 'Deny' }],
+      }],
+    })
+    add({
+      shell: thread('d7', 'Pick a charting library', 'waiting', 'web', 2 * MIN, { pendingRuntimeRequest: { kind: 'user_input' } }),
+      messages: [
+        message('user', 'We need charts on the analytics page. Compare the options and pick one.', 12 * MIN),
+        message('assistant', 'Compared four options on bundle size, React 19 support and accessibility. Two are close, so I want your call.', 2 * MIN),
+      ],
+      steps: [],
+      requests: [{
+        kind: 'question', requestId: 'r-d7', itemId: 'i-d7',
+        questions: [
+          {
+            id: 'lib', header: 'Library', question: 'Which charting library should we use?',
+            options: [
+              { label: 'Recharts', description: 'Most familiar, 98 kB' },
+              { label: 'Visx', description: 'Smallest, more code to write' },
+              { label: 'ECharts', description: 'Most features, 320 kB' },
+            ],
+          },
+          {
+            id: 'charts', header: 'Charts', question: 'Which charts are needed in the first version?', multiSelect: true,
+            options: [{ label: 'Line' }, { label: 'Bar' }, { label: 'Funnel' }, { label: 'Heatmap' }],
+          },
+        ],
+      }],
     })
     add({
       shell: thread('d3', 'Release notes for 2.4', 'completed', 'web', 25 * MIN),
@@ -142,6 +174,7 @@ export class DemoMachine extends Machine {
       sequence: this.sequence++,
       messages: t.messages,
       steps: label ? [{ id: `${t.shell.id}-step`, label, status: 'running', ordinal: 1 }] : [],
+      requests: t.requests ?? [],
     }
   }
 
@@ -169,6 +202,23 @@ export class DemoMachine extends Machine {
     this.touch(t, 'running')
     this.emit(t.shell.id)
     this.reply(t, 'This is demo mode, so your voice message stayed on this device. Pair a T3 machine on your phone to talk to a real agent.')
+  }
+
+  /** Answering in demo mode clears the request and gets a short reply. */
+  override async respond(threadId: string, requestId: string, response: Parameters<Machine['respond']>[2]) {
+    const t = this.threads.get(threadId)
+    if (!t) throw new Error('This thread is no longer available.')
+    t.requests = (t.requests ?? []).filter(r => r.requestId !== requestId)
+    t.shell = { ...t.shell, pendingRuntimeRequest: null }
+    const said = 'decision' in response
+      ? response.decision === 'decline' ? 'Denied.' : 'Approved.'
+      : Object.values(response.answers).map(a => (Array.isArray(a) ? a.join(', ') : a)).join(' · ')
+    t.messages = [...t.messages, message('user', said)]
+    this.touch(t, 'running')
+    this.emit(t.shell.id)
+    this.reply(t, 'decision' in response && response.decision === 'decline'
+      ? 'Understood, skipping that step. Nothing was changed.'
+      : 'Thanks, carrying on with that.')
   }
 
   override async launch(input: Omit<LaunchInput, 'config'>) {

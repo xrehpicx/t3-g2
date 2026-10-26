@@ -162,10 +162,22 @@ export function displayText(message: Pick<ThreadMessage, 'role' | 'text'>): stri
 }
 
 /**
- * Chat lines. Your messages are one line starting with `>`, cut with `…` if longer; turns are separated by a blank line; a reply
+ * Chat lines. Your messages are one line starting with `>`, cut with `…` if longer; messages from
+ * another agent are one line starting with `▷` and the sending thread's name; turns are separated by a blank line; a reply
  * still being written ends with `…`. Only the last few messages are used.
  */
-export function chatLines(messages: ThreadMessage[], widthPx = TEXT_W, limit = MAX_MESSAGES): string[] {
+export const AGENT_MARK = '▷'
+
+/** A message one agent sent another: shown as one line, `▷ sender: message`. */
+export const isFromAgent = (m: Pick<ThreadMessage, 'role' | 'createdBy' | 'senderThreadId'>) =>
+  m.role === 'user' && (m.createdBy === 'agent' || Boolean(m.senderThreadId))
+
+export function chatLines(
+  messages: ThreadMessage[],
+  widthPx = TEXT_W,
+  limit = MAX_MESSAGES,
+  senderName: (threadId: string) => string | undefined = () => undefined,
+): string[] {
   const lines: string[] = []
   const recent = messages.filter(m => m.role === 'user' || m.role === 'assistant').slice(-limit)
   const youPrefix = '> '
@@ -173,7 +185,10 @@ export function chatLines(messages: ThreadMessage[], widthPx = TEXT_W, limit = M
     const text = displayText(message)
     if (!text) continue
     if (lines.length) lines.push('')
-    if (message.role === 'user') {
+    if (isFromAgent(message)) {
+      const from = (message.senderThreadId && senderName(message.senderThreadId)) || 'agent'
+      lines.push(fitWidth(`${AGENT_MARK} ${from}: ${text.replace(/\s+/g, ' ')}`, widthPx))
+    } else if (message.role === 'user') {
       // Your own messages take one line: you know what you said, the reply is what matters.
       lines.push(youPrefix + fitWidth(text, widthPx - textWidth(youPrefix)))
     } else {
@@ -198,4 +213,76 @@ export function titleBadge(mark: Mark, runMs: number | null): string {
   if (mark === 'fail') return `${MARK.fail} failed`
   if (mark === 'stop') return `${MARK.stop} stopped`
   return `${MARK.done} ready`
+}
+
+// --- answering questions and approvals --------------------------------------------------------
+
+export interface ChoiceRow {
+  key: string
+  label: string
+  /** Secondary text, dimmer, after the label. */
+  detail?: string
+  mark: string
+}
+
+export interface AnswerView {
+  head: string
+  side: string
+  /** The question or approval detail, wrapped. */
+  prompt: string[]
+  rows: ChoiceRow[]
+}
+
+const SELECTED = '●'
+const UNSELECTED = '○'
+const CHECKED = '■'
+const UNCHECKED = '□'
+export const DONE_KEY = '__done'
+
+/** One question of a request: its options, checkboxes for multi-select, and a Done row. */
+export function questionView(
+  q: { header: string; question: string; options: Array<{ label: string; description?: string; value?: string }>; multiSelect?: boolean },
+  index: number,
+  total: number,
+  chosen: string[],
+  voiced: boolean,
+): AnswerView {
+  const valueOf = (o: { label: string; value?: string }) => o.value ?? o.label
+  const rows: ChoiceRow[] = q.options.map(o => ({
+    key: valueOf(o),
+    label: o.label,
+    detail: o.description,
+    mark: q.multiSelect ? (chosen.includes(valueOf(o)) ? CHECKED : UNCHECKED) : chosen.includes(valueOf(o)) ? SELECTED : UNSELECTED,
+  }))
+  if (q.multiSelect) rows.push({ key: DONE_KEY, label: chosen.length ? `Done (${chosen.length})` : 'Done', mark: MARK.run })
+  return {
+    head: `${MARK.ask} ${total > 1 ? `Question ${index + 1} of ${total}` : 'Question'}`,
+    side: voiced ? '● answered by voice' : q.header,
+    prompt: wrapWidth(q.question, FULL_W - 8).slice(0, 3),
+    rows,
+  }
+}
+
+export function approvalView(what: string, detail: string, options: Array<{ decision: string; label: string }>): AnswerView {
+  return {
+    head: `${MARK.ask} ${what}`,
+    side: '',
+    prompt: detail ? wrapWidth(detail, FULL_W - 8).slice(0, 3) : [],
+    rows: options.map(o => ({ key: o.decision, label: o.label, mark: o.decision === 'decline' || o.decision === 'cancel' ? '□' : MARK.run })),
+  }
+}
+
+/** Choice rows as dim/bright layers (selection by brightness), each kept to one line. */
+export function choiceLayers(rows: ChoiceRow[], cursor: number, start: number, visibleRows: number, widthPx = FULL_W) {
+  const lines = rows.slice(start, start + visibleRows).map(row => {
+    const head = `${row.mark} ${row.label}`
+    if (!row.detail) return fitWidth(head, widthPx - 4)
+    const room = widthPx - 4 - textWidth(head) - textWidth('   ')
+    return room > 40 ? `${head}   ${fitWidth(row.detail, room)}` : fitWidth(head, widthPx - 4)
+  })
+  const selected = cursor - start
+  return {
+    dim: lines.map((line, i) => (i === selected ? '' : line)).join('\n'),
+    bright: lines.map((line, i) => (i === selected ? line : '')).join('\n'),
+  }
 }

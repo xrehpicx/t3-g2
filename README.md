@@ -13,12 +13,14 @@ It runs as an Even Hub app on your phone and talks straight to your own T3 serve
 - **List**: pinned threads (not settled or snoozed) with a status mark and a right-hand column: `▶ 3:12` running with its timer, `★` waiting for you, `●` new reply, `○` done, `■` failed. `+ New thread` is always first.
 - **Thread**: the latest messages, newest at the bottom, with a live line under them showing what the agent is doing (`▅ $ pnpm test`, `▃ edit auth.ts`, `▇ thinking`).
 - **Scrolling** follows new output. Swipe up to read back; it stops following and shows `▼ 3 new · tap for latest`. Tap, or swipe back to the bottom, to resume.
+- **Questions and approvals**: when an agent asks something, the live line says `★ a question for you · tap to answer`. Tap to answer one question at a time: swipe to an option, tap to pick (or tick, for multi-select), or hold to say your answer. Approvals (run a command, change files) work the same way with the agent's own options.
+- **Messages from other agents** show as a single line: `▷ sending thread: message`.
 - **Voice**: hold the touchpad, speak, release to send. The message steers the running turn if there is one. Empty, too-short or silent recordings are never sent. A double tap mid-recording (for example to dismiss a notification) pauses it: hold to continue, tap to send, swipe to discard.
 
 | Gesture | List | Thread |
 |---|---|---|
 | Swipe | move | scroll history |
-| Tap | open | jump to latest |
+| Tap | open | answer a question, or jump to latest |
 | Hold, release | | record, send |
 | Double tap | exit | back |
 

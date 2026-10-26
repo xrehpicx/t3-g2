@@ -45,3 +45,33 @@ export async function sendTextMessage(net: Net, session: Session, thread: Target
   if (!canOperate(session)) throw new ReadOnlyError()
   await dispatchMessage(net, session, thread, text, [])
 }
+
+export type RequestResponse =
+  | { decision: string }
+  | { answers: Record<string, string | string[]>; voiceByQuestionId?: Record<string, Uint8Array> }
+
+/**
+ * Answers a question or approval the agent is waiting on. A spoken answer is attached to its question
+ * as a WAV, with a text answer that tells the agent to transcribe it.
+ */
+export async function respondToRequest(net: Net, session: Session, threadId: string, requestId: string, response: RequestResponse) {
+  if (!canOperate(session)) throw new ReadOnlyError()
+  if ('decision' in response) {
+    await rpc(net, session, 'orchestration.dispatchCommand', {
+      type: 'runtime-request.respond', commandId: uuid(), threadId, requestId, decision: response.decision,
+    })
+    return
+  }
+  const attachmentsByQuestionId: Record<string, unknown[]> = {}
+  for (const [questionId, wav] of Object.entries(response.voiceByQuestionId ?? {})) {
+    assertAudible(wav)
+    attachmentsByQuestionId[questionId] = [await uploadFile(net, session, { name: `answer-${questionId}.wav`, mimeType: 'audio/wav', bytes: wav })]
+  }
+  await rpc(net, session, 'orchestration.dispatchCommand', {
+    type: 'runtime-request.respond', commandId: uuid(), threadId, requestId, answers: response.answers,
+    ...(Object.keys(attachmentsByQuestionId).length ? { attachmentsByQuestionId } : {}),
+  })
+}
+
+/** The text answer sent alongside a spoken one. */
+export const VOICE_ANSWER = 'Answered by voice: the attached WAV is my answer. Transcribe it and use it.'

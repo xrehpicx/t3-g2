@@ -16,6 +16,60 @@ export interface TurnItem {
   streaming?: boolean
   exitCode?: number
   outputIndicatesFailure?: boolean
+  // user_input_request / approval_request
+  requestId?: string
+  questions?: Question[]
+  questionAnswer?: unknown
+  requestKind?: string
+  prompt?: string
+  reason?: string
+  options?: Array<{ decision: string; label: string; warning?: string }>
+}
+
+export interface QuestionOption {
+  label: string
+  description?: string
+  value?: string
+}
+
+export interface Question {
+  id: string
+  header: string
+  question: string
+  options: QuestionOption[]
+  multiSelect?: boolean
+  allowCustomAnswer?: boolean
+}
+
+/** Something the agent is waiting on you for. */
+export type PendingRequest =
+  | { kind: 'question'; requestId: string; itemId: string; questions: Question[] }
+  | { kind: 'approval'; requestId: string; itemId: string; what: string; detail: string; options: Array<{ decision: string; label: string; warning?: string }> }
+
+const OPEN = new Set(['pending', 'waiting', 'running', 'idle'])
+
+/** The request an item represents, if it is still open. */
+export function requestFrom(item: TurnItem): PendingRequest | null {
+  if (!item.requestId || !OPEN.has(item.status)) return null
+  if (item.type === 'user_input_request' && item.questions?.length && item.questionAnswer === undefined) {
+    return { kind: 'question', requestId: item.requestId, itemId: item.id, questions: item.questions }
+  }
+  if (item.type === 'approval_request') {
+    const what = APPROVAL_WHAT[item.requestKind ?? ''] ?? 'Approval needed'
+    const options = item.options?.length
+      ? item.options
+      : [{ decision: 'accept', label: 'Allow' }, { decision: 'acceptForSession', label: 'Allow for this session' }, { decision: 'decline', label: 'Deny' }]
+    return { kind: 'approval', requestId: item.requestId, itemId: item.id, what, detail: (item.prompt || item.reason || '').trim(), options }
+  }
+  return null
+}
+
+const APPROVAL_WHAT: Record<string, string> = {
+  command: 'Run a command?',
+  'file-read': 'Read a file?',
+  'file-change': 'Change files?',
+  'mcp-elicitation': 'A tool needs input',
+  permission: 'Permission needed',
 }
 
 export interface Step {
@@ -78,9 +132,18 @@ export interface ThreadLive {
   sequence: number
   messages: ThreadMessage[]
   steps: Step[]
+  /** Open questions and approvals, oldest first. */
+  requests: PendingRequest[]
 }
 
-export const emptyLive = (): ThreadLive => ({ sequence: 0, messages: [], steps: [] })
+export const emptyLive = (): ThreadLive => ({ sequence: 0, messages: [], steps: [], requests: [] })
+
+function upsertRequest(requests: PendingRequest[], item: TurnItem): PendingRequest[] {
+  if (item.type !== 'user_input_request' && item.type !== 'approval_request') return requests
+  const others = requests.filter(r => r.itemId !== item.id)
+  const open = requestFrom(item)
+  return open ? [...others, open] : others
+}
 
 function upsertStep(steps: Step[], item: TurnItem): Step[] {
   const label = labelFor(item)
@@ -103,8 +166,13 @@ export function fromSnapshot(snapshot: {
   projection: { messages: ThreadMessage[]; visibleTurnItems?: Array<{ item?: TurnItem }> }
 }): ThreadLive {
   let steps: Step[] = []
-  for (const row of snapshot.projection.visibleTurnItems ?? []) if (row.item) steps = upsertStep(steps, row.item)
-  return { sequence: snapshot.snapshotSequence, messages: snapshot.projection.messages, steps }
+  let requests: PendingRequest[] = []
+  for (const row of snapshot.projection.visibleTurnItems ?? []) {
+    if (!row.item) continue
+    steps = upsertStep(steps, row.item)
+    requests = upsertRequest(requests, row.item)
+  }
+  return { sequence: snapshot.snapshotSequence, messages: snapshot.projection.messages, steps, requests }
 }
 
 export interface ThreadEvent {
@@ -121,7 +189,10 @@ export function applyEvent(live: ThreadLive, item: ThreadEvent): ThreadLive {
   if (type === 'message.updated') {
     return { ...live, sequence, messages: upsertMessage(live.messages, payload as ThreadMessage) }
   }
-  if (type === 'turn-item.updated') return { ...live, sequence, steps: upsertStep(live.steps, payload as TurnItem) }
+  if (type === 'turn-item.updated') {
+    const item = payload as TurnItem
+    return { ...live, sequence, steps: upsertStep(live.steps, item), requests: upsertRequest(live.requests, item) }
+  }
   return sequence === live.sequence ? live : { ...live, sequence }
 }
 

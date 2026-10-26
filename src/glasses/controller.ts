@@ -7,7 +7,8 @@ import type {
 import { Recorder } from '../audio/recorder'
 import { AUDIO_PROBLEM_TEXT, audioProblem, durationMs, peak, pcm16ToWav } from '../audio/wav'
 import type { Fleet, FleetState } from '../fleet'
-import { currentStep, emptyLive, type ThreadLive } from '../t3/activity'
+import { currentStep, emptyLive, type PendingRequest, type ThreadLive } from '../t3/activity'
+import { VOICE_ANSWER } from '../t3/send'
 import { SCRATCH } from '../t3/launch'
 import type { Machine, OpenThread } from '../t3/machine'
 import { isBusy } from '../t3/pinned'
@@ -17,20 +18,22 @@ import {
   alignRight, BAR_W, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
   listHeader, listStart, levelGlyph, markFor, NEW_ROW, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
   threadRow, TITLE_SIDE_W, titleBadge, type ListRow,
+  approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
 
 type Sdk = typeof import('@evenrealities/even_hub_sdk')
-type Screen = 'status' | 'list' | 'thread' | 'compose'
+type Screen = 'status' | 'list' | 'thread' | 'compose' | 'answer'
 
 const SEEN_KEY = 't3g2.seen'
 const NOTICE_MS = 4_500
 const RENDER_MS = 300
 const LEVEL_SLOTS = 8
+const ROWS_TOTAL = 10
 
 /** Container ids/names are shared across screens; each screen uses a subset. */
 const C = {
-  head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'],
+  head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'], prompt: [8, 'prompt'],
 } as const
 type Slot = keyof typeof C
 
@@ -81,6 +84,15 @@ export class GlassesController {
   private tick = 0
   private levels: string[] = []
   private composeModel = ''
+  /** The question or approval being answered, and the answers so far. */
+  private answer: {
+    request: PendingRequest
+    q: number
+    cursor: number
+    top: number
+    chosen: Record<string, string[]>
+    voiced: Record<string, Uint8Array>
+  } | null = null
 
   constructor(
     private readonly sdk: Sdk,
@@ -212,6 +224,7 @@ export class GlassesController {
   }
 
   private refresh() {
+    if (this.screen === 'answer') return this.renderAnswer()
     if (this.screen === 'list') return this.renderList()
     if (this.screen === 'thread') return this.renderThread()
     if (this.screen === 'compose') return this.renderCompose()
@@ -282,6 +295,10 @@ export class GlassesController {
     this.markSeen(thread)
     this.openThread = machine.openThread(thread.id, live => {
       this.live = live
+      if (this.screen === 'answer' && this.answer && !this.sending && !live.requests.some(r => r.requestId === this.answer!.request.requestId)) {
+        void this.closeAnswer('Answered somewhere else.')
+        return
+      }
       if (this.current) this.markSeen(this.machineOf(this.current)?.thread(this.current.id) ?? this.current)
       this.scheduleRender()
     })
@@ -308,6 +325,13 @@ export class GlassesController {
     if (this.sending) return { text: `${spinner(this.tick)} sending voice message…`, brightness: BRIGHT }
     if (this.notice) return { text: this.notice, brightness: BRIGHT }
     const unseen = !this.scroll.following ? `▼ ${this.scroll.unseen ? `${this.scroll.unseen} new · ` : ''}tap for latest   ` : ''
+    const request = this.live.requests[0]
+    if (request && this.scroll.following) {
+      const what = request.kind === 'question'
+        ? `${request.questions.length > 1 ? `${request.questions.length} questions` : 'a question'} for you`
+        : request.what.replace(/\?$/, '')
+      return { text: `★ ${what} · tap to answer`, brightness: BRIGHT }
+    }
     if (busy && this.current) {
       const step = currentStep(this.live)
       const what = this.current.needsInput ? '★ waiting for you in T3' : `${spinner(this.tick)} ${step ? step.label : 'working…'}`
@@ -317,12 +341,18 @@ export class GlassesController {
     return { text: 'hold to talk   ·   swipe up for history', brightness: DIM }
   }
 
+  /** Chat lines, naming the sending thread for agent-to-agent messages. */
+  private chat() {
+    const machine = this.current && this.machineOf(this.current)
+    return chatLines(this.live.messages, undefined, undefined, id => machine?.shell.threads.get(id)?.title)
+  }
+
   private renderThread() {
     if (!this.current) return
     const thread = this.current
     const busy = isBusy(thread.status)
     const rows = THREAD_BODY_ROWS
-    const lines = chatLines(this.live.messages)
+    const lines = this.chat()
     this.scroll = contentChanged(this.scroll, lines.length, rows)
     const view = visible(lines, this.scroll, rows)
     const loading = !this.live.sequence && !this.live.messages.length
@@ -341,6 +371,119 @@ export class GlassesController {
       { slot: 'bar', x: FULL_W - BAR_W, y: rowY(1), w: BAR_W, h: rowsH(rows), text: bar, brightness: DIM },
       { slot: 'status', x: 0, y: rowY(1 + rows), w: FULL_W, h: rowsH(1), text: fitWidth(status.text, FULL_W - 4), brightness: status.brightness },
     ])
+  }
+
+  // --- answering ---------------------------------------------------------------------------
+
+  private openAnswer(request: PendingRequest) {
+    this.answer = { request, q: 0, cursor: 0, top: 0, chosen: {}, voiced: {} }
+    this.screen = 'answer'
+    this.clearNotice()
+    return this.renderAnswer()
+  }
+
+  private closeAnswer(notice?: string) {
+    this.answer = null
+    this.screen = 'thread'
+    if (notice) void this.showNotice(notice)
+    return this.renderThread()
+  }
+
+  private answerView(): AnswerView | null {
+    const a = this.answer
+    if (!a) return null
+    if (a.request.kind === 'approval') return approvalView(a.request.what, a.request.detail, a.request.options)
+    const q = a.request.questions[a.q]
+    return questionView(q, a.q, a.request.questions.length, a.chosen[q.id] ?? [], Boolean(a.voiced[q.id]))
+  }
+
+  private answerHint(): { text: string; brightness: number } {
+    if (this.recorder.busy || this.sending || this.notice) return this.statusRow(false)
+    const a = this.answer
+    if (!a || a.request.kind === 'approval') return { text: 'tap: choose   ·   double tap: back', brightness: DIM }
+    const q = a.request.questions[a.q]
+    return { text: `${q.multiSelect ? 'tap: tick · Done to continue' : 'tap: choose'}   ·   hold: say it   ·   2x: back`, brightness: DIM }
+  }
+
+  private renderAnswer() {
+    const view = this.answerView()
+    if (!view || !this.answer) return
+    const promptRows = view.prompt.length
+    const first = 1 + promptRows + (promptRows ? 1 : 0)
+    const visibleRows = ROWS_TOTAL - 1 - first
+    const a = this.answer
+    a.cursor = Math.max(0, Math.min(view.rows.length - 1, a.cursor))
+    a.top = listStart(view.rows.length, a.cursor, a.top, visibleRows)
+    const { dim, bright } = choiceLayers(view.rows, a.cursor, a.top, visibleRows)
+    const side = alignRight(view.side, TITLE_SIDE_W + 60 - 6)
+    const hint = this.answerHint()
+    return this.draw(`answer:${a.request.requestId}:${a.q}:${promptRows}`, [
+      { slot: 'head', x: 0, y: rowY(0), w: FULL_W - TITLE_SIDE_W - 60, h: rowsH(1), text: fitWidth(view.head, FULL_W - TITLE_SIDE_W - 68), brightness: BRIGHT },
+      { slot: 'side', x: FULL_W - TITLE_SIDE_W - 60, y: rowY(0), w: TITLE_SIDE_W + 60, h: rowsH(1), text: side, brightness: DIM },
+      ...(promptRows ? [{ slot: 'prompt' as const, x: 0, y: rowY(1), w: FULL_W, h: rowsH(promptRows), text: view.prompt.join('\n'), brightness: MID }] : []),
+      { slot: 'body', x: 0, y: rowY(first), w: FULL_W, h: rowsH(visibleRows), text: dim, brightness: 1 },
+      { slot: 'selected', x: 0, y: rowY(first), w: FULL_W, h: rowsH(visibleRows), text: bright, brightness: BRIGHT },
+      { slot: 'status', x: 0, y: rowY(ROWS_TOTAL - 1), w: FULL_W, h: rowsH(1), text: fitWidth(hint.text, FULL_W - 4), brightness: hint.brightness },
+    ])
+  }
+
+  /** Records the chosen row: approvals answer immediately; questions advance, then submit. */
+  private async chooseAnswer() {
+    const a = this.answer
+    const view = this.answerView()
+    if (!a || !view) return
+    const row = view.rows[a.cursor]
+    if (!row) return
+    if (a.request.kind === 'approval') return this.submitAnswer({ decision: row.key })
+    const q = a.request.questions[a.q]
+    if (q.multiSelect) {
+      if (row.key === DONE_KEY) {
+        if (!(a.chosen[q.id]?.length) && !a.voiced[q.id]) return this.showNotice('Pick at least one, or hold to say it.', 2500)
+        return this.nextQuestion()
+      }
+      const current = a.chosen[q.id] ?? []
+      a.chosen[q.id] = current.includes(row.key) ? current.filter(k => k !== row.key) : [...current, row.key]
+      delete a.voiced[q.id]
+      return this.renderAnswer()
+    }
+    a.chosen[q.id] = [row.key]
+    delete a.voiced[q.id]
+    return this.nextQuestion()
+  }
+
+  private async nextQuestion() {
+    const a = this.answer
+    if (!a || a.request.kind !== 'question') return
+    if (a.q < a.request.questions.length - 1) {
+      a.q++
+      a.cursor = 0
+      a.top = 0
+      return this.renderAnswer()
+    }
+    const answers: Record<string, string | string[]> = {}
+    for (const q of a.request.questions) {
+      answers[q.id] = a.voiced[q.id] ? VOICE_ANSWER : q.multiSelect ? (a.chosen[q.id] ?? []) : (a.chosen[q.id]?.[0] ?? '')
+    }
+    return this.submitAnswer({ answers, voiceByQuestionId: a.voiced })
+  }
+
+  private async submitAnswer(response: Parameters<Machine['respond']>[2]) {
+    const a = this.answer
+    const thread = this.current
+    const machine = thread && this.machineOf(thread)
+    if (!a || !thread || !machine) return
+    this.sending = true
+    await this.renderAnswer()
+    try {
+      await machine.respond(thread.id, a.request.requestId, response)
+      this.sending = false
+      this.live = { ...this.live, requests: this.live.requests.filter(r => r.requestId !== a.request.requestId) }
+      this.scroll = jumpToBottom(this.scroll)
+      await this.closeAnswer('● answer sent')
+    } catch (error) {
+      this.sending = false
+      await this.showNotice(error, 8000)
+    }
   }
 
   // --- compose -----------------------------------------------------------------------------
@@ -396,7 +539,8 @@ export class GlassesController {
   // --- voice -------------------------------------------------------------------------------
 
   private async startRecording() {
-    if ((this.screen !== 'thread' && this.screen !== 'compose') || this.sending) return
+    if (this.screen === 'answer' && this.answer?.request.kind !== 'question') return
+    if ((this.screen !== 'thread' && this.screen !== 'compose' && this.screen !== 'answer') || this.sending) return
     if (this.recorder.busy && !this.recorder.paused) return
     const resuming = this.recorder.paused
     // Open the request socket now so sending on release doesn't wait for a handshake.
@@ -420,9 +564,16 @@ export class GlassesController {
     if (problem) return this.showNotice(AUDIO_PROBLEM_TEXT[problem])
     const ms = durationMs(recording.pcm)
 
+    const wav = pcm16ToWav(recording.pcm)
+    // A spoken answer to the current question.
+    if (this.screen === 'answer' && this.answer?.request.kind === 'question') {
+      const q = this.answer.request.questions[this.answer.q]
+      this.answer.voiced[q.id] = wav
+      delete this.answer.chosen[q.id]
+      return this.nextQuestion()
+    }
     this.sending = true
     await this.refresh()
-    const wav = pcm16ToWav(recording.pcm)
     try {
       if (this.screen === 'compose') await this.sendNewThread(wav)
       else await this.sendReply(wav)
@@ -507,6 +658,7 @@ export class GlassesController {
       // paused, ignore them so the recording survives a stack of notifications.
       if (this.recorder.recording || (this.recorder.busy && !this.recorder.paused)) void this.pauseRecording()
       else if (this.recorder.paused) return
+      else if (this.screen === 'answer') void this.closeAnswer()
       else if (this.screen === 'thread') void this.closeThread()
       else if (this.screen === 'compose') { this.screen = 'list'; void this.renderList() }
       else void this.bridge.shutDownPageContainer(1)
@@ -527,16 +679,21 @@ export class GlassesController {
     if (any(T.CLICK_EVENT)) {
       if (this.screen === 'status' && this.fleet.state.phase === 'unpaired') { void this.fleet.startDemo(); return }
       if (this.screen === 'list') this.openCursor()
-      // Tap in a thread: jump back to the newest message and resume following.
-      else if (this.screen === 'thread') { this.scroll = jumpToBottom(this.scroll); void this.renderThread() }
+      else if (this.screen === 'answer') { if (!this.sending) void this.chooseAnswer() }
+      // Tap in a thread: answer what the agent is asking, or jump back to the newest message.
+      else if (this.screen === 'thread') {
+        if (this.scroll.following && this.live.requests[0]) void this.openAnswer(this.live.requests[0])
+        else { this.scroll = jumpToBottom(this.scroll); void this.renderThread() }
+      }
       return
     }
 
     if (text === T.SCROLL_TOP_EVENT || text === T.SCROLL_BOTTOM_EVENT) {
       const up = text === T.SCROLL_TOP_EVENT
       if (this.screen === 'list') this.moveCursor(up ? -1 : 1)
+      else if (this.screen === 'answer' && this.answer) { this.answer.cursor += up ? -1 : 1; void this.renderAnswer() }
       else if (this.screen === 'thread') {
-        const total = chatLines(this.live.messages).length
+        const total = this.chat().length
         this.scroll = up ? scrollOlder(this.scroll, total, THREAD_BODY_ROWS) : scrollNewer(this.scroll, total, THREAD_BODY_ROWS)
         // Scrolling should feel immediate, not wait for the batched redraw.
         void this.renderThread()
