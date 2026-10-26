@@ -10,11 +10,29 @@ import { CANDIDATE_ORIGINS, DEFAULT_SERVER } from '../config'
 import type { Fleet, FleetState, FoundMachine } from '../fleet'
 import { clock, markFor, MARK } from '../glasses/screens'
 import { SEND_DELAYS } from '../audio/hold'
-import { CLOCKS, DEFAULT_SETTINGS, REPLY_FIT, DENSITIES, RUNTIME_MODES, type ClockFormat, type Density, type RuntimeMode } from '../settings'
+import { CLOCKS, DEFAULT_SETTINGS, LIST_FIELDS, REPLY_FIT, DENSITIES, RUNTIME_MODES, type ClockFormat, type Density, type ListField, type RuntimeMode } from '../settings'
 import type { DiagStep } from '../t3/diagnose'
 import { SCRATCH } from '../t3/launch'
 import type { ServerConfig } from '../t3/serverConfig'
 import type { PinnedThread } from '../t3/types'
+
+/** A square switch: the toolkit's is rounded, and this app has no rounded corners. */
+function Toggle({ checked, onChange }: { checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={`relative h-6 w-10 shrink-0 cursor-pointer transition-colors duration-200 ${checked ? 'bg-accent' : 'bg-surface-lighter'}`}
+    >
+      <span className={`absolute top-1 left-1 h-4 w-4 bg-white transition-transform duration-200 ${checked ? 'translate-x-4' : ''}`} />
+    </button>
+  )
+}
+
+const toggleField = (fields: ListField[], field: ListField, on: boolean): ListField[] =>
+  LIST_FIELDS.map(f => f.value).filter(v => (v === field ? on : fields.includes(v)))
 
 function useFleet(fleet: Fleet): FleetState {
   return useSyncExternalStore(listener => fleet.subscribe(listener), () => fleet.state)
@@ -290,12 +308,28 @@ export function App({ fleet }: { fleet: Fleet }) {
 
       {state.machines.length > 0 && (
         <Section label="Glasses display">
-          <Row label="Density" hint="The glasses use one fixed font size, so this changes how much fits instead. Compact removes the gaps between chat messages and adds each thread's project to the list.">
+          <Row label="Density" hint="The glasses use one fixed font size, so this changes how much fits instead. Compact removes the gaps between chat messages.">
             <Select value={s.density} options={DENSITIES} onValueChange={density => void fleet.updateSettings({ density: density as Density })} />
           </Row>
           <Row label="Clock" hint="The time of day at the top right of the thread list and of each thread.">
             <Select value={s.clock} options={CLOCKS} onValueChange={clock => void fleet.updateSettings({ clock: clock as ClockFormat })} />
           </Row>
+        </Section>
+      )}
+
+      {state.machines.length > 0 && (
+        <Section label="Beside each thread in the glasses list">
+          {LIST_FIELDS.map(f => (
+            <Row key={f.value} label={f.label} hint={f.hint}>
+              <Toggle
+                checked={s.listFields.includes(f.value)}
+                onChange={on => void fleet.updateSettings({ listFields: toggleField(s.listFields, f.value, on) })}
+              />
+            </Row>
+          ))}
+          <div className="bg-surface px-4 py-3 text-[13px] text-text-dim">
+            Shown after the title, in this order, when there is room. Following what a thread is doing keeps a live connection open for the threads on screen.
+          </div>
         </Section>
       )}
 

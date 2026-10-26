@@ -1,7 +1,7 @@
 import type { Net } from '../net'
-import type { PendingRequest, ThreadLive } from './activity'
+import { currentStep, type PendingRequest, type ThreadLive } from './activity'
 import type { LaunchInput } from './launch'
-import { Machine, type OpenThread } from './machine'
+import { Machine, type Glance, type OpenThread } from './machine'
 import type { ServerConfig } from './serverConfig'
 import { fromSnapshot } from './shellStore'
 import type { ThreadMessage, ThreadShell, ThreadStatus } from './types'
@@ -153,13 +153,21 @@ export class DemoMachine extends Machine {
     this.link = 'live'
     clearInterval(this.timer)
     // The running thread changes what it is doing every few seconds, like a real agent.
-    this.timer = setInterval(() => { this.step++; this.emitAll() }, 2_500)
+    this.timer = setInterval(() => { this.step++; this.emitAll(); this.changed() }, 2_500)
     this.changed()
   }
 
   override stop() { clearInterval(this.timer) }
   override async poll() { this.changed() }
   override warm() {}
+  override watch() {}
+  override glance(id: string): Glance | undefined {
+    const t = this.threads.get(id)
+    if (!t) return undefined
+    const live = this.live(t)
+    const reply = t.messages.findLast(m => m.role === 'assistant' && m.text.trim())
+    return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null }
+  }
   override config(): Promise<ServerConfig> {
     const model = this.showcase ? 'claude-sonnet-5-5' : 'demo-model'
     return Promise.resolve({ models: [{ instanceId: 'demo', provider: this.showcase ? 'Claude' : 'Demo', slug: model, name: this.showcase ? 'Claude Sonnet 5.5' : 'Demo model' }], defaultModel: { instanceId: 'demo', model }, defaultRuntimeMode: 'full-access' })

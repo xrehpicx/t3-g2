@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAFETY_PX, textWidth } from './font'
 import {
-  alignRight, CLOCK_W, formatClock, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
+  alignRight, CLOCK_W, listDetail, titleWithDetail, formatClock, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
   MAX_MESSAGES, NEW_ROW, rowY, scrollbar, spinner, levelGlyph, TEXT_W, threadRow, titleBadge,
 } from './screens'
 import type { PinnedThread, ThreadMessage } from '../t3/types'
@@ -31,7 +31,7 @@ describe('marks', () => {
 })
 
 describe('list', () => {
-  const rows = [NEW_ROW, threadRow(thread({ status: 'running', runStartedAt: '2026-01-01T00:58:55Z' }), false, NOW, false), threadRow(thread({ title: 'x'.repeat(200) }), false, NOW, false)]
+  const rows = [NEW_ROW, threadRow(thread({ status: 'running', runStartedAt: '2026-01-01T00:58:55Z' }), false, NOW), threadRow(thread({ title: 'x'.repeat(200) }), false, NOW)]
   it('puts the run timer and ages in the right column', () => {
     expect(rows[1].side).toBe('1:05')
     expect(rows[2].side).toBe('1h')
@@ -197,17 +197,17 @@ describe('buildRows', () => {
   const many = Array.from({ length: 25 }, (_, i) => thread({ id: `t${i}`, title: `Thread ${i}` }))
   const none = () => false
   it('starts with + New thread and the first ten threads', () => {
-    const rows = buildRows(many, none, NOW, false)
+    const rows = buildRows(many, none, NOW)
     expect(rows).toHaveLength(1 + PAGE_SIZE)
     expect(rows[0].key).toBe('new')
     expect(rows.at(-1)?.key).toBe('m:t9')
   })
   it('shows everything when there are fewer than a page', () => {
-    expect(buildRows(many.slice(0, 4), none, NOW, false)).toHaveLength(5)
+    expect(buildRows(many.slice(0, 4), none, NOW)).toHaveLength(5)
   })
   it('has no show more row: more threads just load as you scroll', () => {
-    expect(buildRows(many, none, NOW, false).some(r => /more|less/i.test(r.title))).toBe(false)
-    expect(buildRows(many, none, NOW, false, 20)).toHaveLength(21)
+    expect(buildRows(many, none, NOW).some(r => /more|less/i.test(r.title))).toBe(false)
+    expect(buildRows(many, none, NOW, undefined, 20)).toHaveLength(21)
   })
 })
 
@@ -229,7 +229,7 @@ describe('loadedFor', () => {
 describe('a ticking timer never wraps the row', () => {
   it('keeps the whole line inside the width for every second of a timer', () => {
     for (let seconds = 0; seconds < 3600; seconds += 7) {
-      const row = threadRow(thread({ status: 'running', runStartedAt: new Date(NOW - seconds * 1000).toISOString() }), false, NOW, false)
+      const row = threadRow(thread({ status: 'running', runStartedAt: new Date(NOW - seconds * 1000).toISOString() }), false, NOW)
       const { bright } = listLayers([row], 0, 0, 576)
       expect(textWidth(bright)).toBeLessThanOrEqual(576 - SAFETY_PX)
     }
@@ -241,11 +241,6 @@ describe('density', () => {
     const ms = [msg('user', 'hi'), msg('assistant', 'hello')]
     expect(chatLines(ms)).toEqual(['> hi', '', 'hello'])
     expect(chatLines(ms, undefined, undefined, undefined, false)).toEqual(['> hi', 'hello'])
-  })
-  it('compact list rows show the project beside the title', () => {
-    const t = thread({ title: 'Fix login', project: 'storefront' })
-    expect(buildRows([t], () => false, NOW, false, 10, true)[1].title).toBe('Fix login · storefront')
-    expect(buildRows([t], () => false, NOW, false, 10, false)[1].title).toBe('Fix login')
   })
 })
 
@@ -270,5 +265,40 @@ describe('formatClock', () => {
       const text = formatClock(at(h, m), '12h')
       expect(textWidth(text) + SAFETY_PX).toBeLessThanOrEqual(CLOCK_W)
     }
+  })
+})
+
+describe('list details', () => {
+  const t = (over: Partial<PinnedThread> = {}) => thread({ title: 'Fix login', project: 'storefront', machineLabel: 'imaimain', status: 'running', ...over })
+  const glance = { step: '$ pnpm test', reply: '## Done\n\nAll **green**.' }
+  it('shows only what is chosen, in a fixed order', () => {
+    expect(listDetail(['activity'], t(), glance, true)).toBe('$ pnpm test')
+    expect(listDetail(['machine', 'project', 'activity'], t(), glance, true)).toBe('$ pnpm test · storefront · imaimain')
+    expect(listDetail([], t(), glance, true)).toBe('')
+  })
+  it('shows what a thread is doing only while it is running', () => {
+    expect(listDetail(['activity', 'project'], t({ status: 'completed' }), glance, false)).toBe('storefront')
+    expect(listDetail(['activity'], t(), undefined, false)).toBe('')
+  })
+  it('flattens the latest reply to one plain line', () => {
+    expect(listDetail(['reply'], t(), glance, false)).toBe('Done All green.')
+  })
+  it('names the machine only when there are several', () => {
+    expect(listDetail(['machine'], t(), glance, false)).toBe('')
+  })
+  it('fits the detail beside the title without overflowing', () => {
+    const room = 400
+    for (const title of ['Hi', 'Fix flaky checkout e2e test', 'x'.repeat(120)]) {
+      const line = titleWithDetail(title, '$ pnpm test:e2e checkout --repeat 50', room)
+      expect(textWidth(line)).toBeLessThanOrEqual(room)
+    }
+    expect(titleWithDetail('Fix flaky checkout e2e test', '$ pnpm test', room)).toContain(' · $ pnpm test')
+  })
+  it('keeps the title when there is no room to say anything useful', () => {
+    expect(titleWithDetail('Fix flaky checkout e2e test', 'detail', 120)).not.toContain('·')
+  })
+  it('lets a long title keep most of the line', () => {
+    const line = titleWithDetail('x'.repeat(120), 'detail text here', 400)
+    expect(textWidth(line.split(' · ')[0])).toBeGreaterThanOrEqual(400 * 0.5)
   })
 })

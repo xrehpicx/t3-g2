@@ -1,8 +1,8 @@
 import type { Net } from '../net'
-import { applyEvent, fromSnapshot as liveFromSnapshot, type ThreadEvent, type ThreadLive } from './activity'
+import { applyEvent, currentStep, fromSnapshot as liveFromSnapshot, type ThreadEvent, type ThreadLive } from './activity'
 import { AuthError, fetchThread } from './http'
 import { launchThread, type LaunchInput } from './launch'
-import { isGlassesThread, toPinned } from './pinned'
+import { isBusy, isGlassesThread, toPinned } from './pinned'
 import { rpc, warmRpc } from './rpc'
 import { parseServerConfig, type ServerConfig } from './serverConfig'
 import { respondToRequest, sendTextMessage, sendVoiceMessage, type RequestResponse } from './send'
@@ -25,6 +25,24 @@ export interface OpenThread {
   close(): void
 }
 
+/** A thread at a glance, for the list: what it is doing now and its latest reply. */
+export interface Glance {
+  /** The step the agent is on, e.g. "$ pnpm test"; null when nothing is running. */
+  step: string | null
+  /** The newest agent reply, as written. */
+  reply: string | null
+}
+
+/** What the list wants to know about each visible thread. */
+export interface GlanceWants { activity: boolean; reply: boolean }
+
+interface Watched {
+  live: ThreadLive | null
+  /** The thread's `updatedAt` when its snapshot was last fetched (replies only change when it does). */
+  fetchedFor: string
+  stream: OpenThread | null
+}
+
 const FALLBACK_POLL_MS = 10_000
 const THREAD_FALLBACK_POLL_MS = 4_000
 const STREAM_GRACE_MS = 8_000
@@ -39,6 +57,7 @@ export class Machine {
   private lastLive = 0
   private firstSnapshot = true
   private configCache: Promise<ServerConfig> | null = null
+  private watched = new Map<string, Watched>()
 
   constructor(
     private readonly net: Net,
@@ -86,6 +105,8 @@ export class Machine {
   }
 
   stop() {
+    for (const w of this.watched.values()) w.stream?.close()
+    this.watched.clear()
     this.stream?.close()
     this.stream = null
     clearInterval(this.fallback)
@@ -109,6 +130,44 @@ export class Machine {
       .filter(t => isGlassesThread(t))
       .sort(pinOrder)
       .map(t => toPinned(t, projects, { id: this.id, label: this.record.label }))
+  }
+
+  /**
+   * Keeps a light view of the threads the list is showing. A running thread is followed live (for its
+   * current step); others are fetched once per change, and only when replies are wanted. Threads that
+   * scroll out of view are dropped. Cheap to call on every redraw.
+   */
+  watch(visible: PinnedThread[], wants: GlanceWants) {
+    const ids = new Set(visible.map(t => t.id))
+    for (const [id, w] of this.watched) {
+      if (ids.has(id)) continue
+      w.stream?.close()
+      this.watched.delete(id)
+    }
+    for (const t of visible) {
+      let w = this.watched.get(t.id)
+      if (!w) this.watched.set(t.id, w = { live: null, fetchedFor: '', stream: null })
+      const entry = w
+      if (wants.activity && isBusy(t.status)) {
+        entry.stream ??= this.openThread(t.id, live => { entry.live = live; this.onChange() })
+      } else {
+        entry.stream?.close()
+        entry.stream = null
+        if (wants.reply && entry.fetchedFor !== t.updatedAt) {
+          entry.fetchedFor = t.updatedAt
+          void fetchThread(this.net, this.session, t.id)
+            .then(snapshot => { entry.live = liveFromSnapshot(snapshot as never); this.onChange() })
+            .catch(() => {}) // tried again when the thread next changes
+        }
+      }
+    }
+  }
+
+  glance(threadId: string): Glance | undefined {
+    const live = this.watched.get(threadId)?.live
+    if (!live) return undefined
+    const reply = live.messages.findLast(m => m.role === 'assistant' && m.text.trim())
+    return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null }
   }
 
   /** Any thread this server knows, pinned or not (used right after starting a new one). */

@@ -34,6 +34,12 @@ describe('settings', () => {
     expect(normalizeSettings({ sendDelay: 7 }).sendDelay).toBe(DEFAULT_SETTINGS.sendDelay)
     expect(normalizeSettings({}).sendDelay).toBe(3)
   })
+  it('keeps chosen list fields in display order, drops junk, and allows none', () => {
+    expect(normalizeSettings({}).listFields).toEqual(['activity', 'machine'])
+    expect(normalizeSettings({ listFields: ['machine', 'reply', 'nope', 'reply'] }).listFields).toEqual(['reply', 'machine'])
+    expect(normalizeSettings({ listFields: [] }).listFields).toEqual([])
+    expect(normalizeSettings({ listFields: 'activity' }).listFields).toEqual(['activity', 'machine'])
+  })
   it('defaults to comfortable density and keeps compact', () => {
     expect(normalizeSettings({}).density).toBe('comfortable')
     expect(normalizeSettings({ density: 'compact' }).density).toBe('compact')

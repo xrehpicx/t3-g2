@@ -1,4 +1,7 @@
 import { charWidth, fitWidth, LINE_PX, SAFETY_PX, textWidth, wrapWidth } from './font'
+import type { ListField } from '../settings'
+import type { Glance } from '../t3/machine'
+import { isBusy } from '../t3/pinned'
 import type { PinnedThread, ThreadMessage, ThreadStatus } from '../t3/types'
 
 /**
@@ -81,16 +84,28 @@ export interface ListRow {
   title: string
   /** Right column: run timer, or how long ago it changed. */
   side: string
+  /** Shown after the title, dimmer in meaning if not in colour; dropped first when space is short. */
+  detail: string
 }
 
-export function threadRow(t: PinnedThread, unread: boolean, now: number, showMachine: boolean, showProject = false): ListRow {
+export function threadRow(t: PinnedThread, unread: boolean, now: number, detail = ''): ListRow {
   const mark = markFor(t.status, t.needsInput, unread)
   const side = mark === 'run' && t.runStartedAt ? clock(now - Date.parse(t.runStartedAt)) : mark === 'ask' ? 'you' : age(t.updatedAt, now)
-  const extra = [showProject ? t.project : '', showMachine ? t.machineLabel : ''].filter(Boolean).join(' · ')
-  return { key: `${t.machineId}:${t.id}`, mark, title: extra ? `${t.title} · ${extra}` : t.title, side }
+  return { key: `${t.machineId}:${t.id}`, mark, title: t.title, side, detail }
 }
 
-export const NEW_ROW: ListRow = { key: 'new', mark: 'add', title: 'New thread', side: '' }
+/** What the user chose to see beside a thread's title, in a fixed order, as one line. */
+export function listDetail(fields: readonly ListField[], t: PinnedThread, glance: Glance | undefined, showMachine: boolean): string {
+  const oneLine = (text: string) => plainText(text).replace(/\s+/g, ' ').trim()
+  const parts: string[] = []
+  if (fields.includes('activity') && isBusy(t.status) && glance?.step) parts.push(glance.step)
+  if (fields.includes('reply') && glance?.reply) parts.push(oneLine(glance.reply))
+  if (fields.includes('project') && t.project) parts.push(t.project)
+  if (fields.includes('machine') && showMachine) parts.push(t.machineLabel)
+  return parts.filter(Boolean).join(' · ')
+}
+
+export const NEW_ROW: ListRow = { key: 'new', mark: 'add', title: 'New thread', side: '', detail: '' }
 
 /** The glasses list loads this many threads at a time, and the next batch as you reach the end. */
 export const PAGE_SIZE = 10
@@ -100,11 +115,10 @@ export function buildRows(
   threads: PinnedThread[],
   unread: (t: PinnedThread) => boolean,
   now: number,
-  showMachine: boolean,
+  detail: (t: PinnedThread) => string = () => '',
   loaded: number = PAGE_SIZE,
-  showProject = false,
 ): ListRow[] {
-  return [NEW_ROW, ...threads.slice(0, loaded).map(t => threadRow(t, unread(t), now, showMachine, showProject))]
+  return [NEW_ROW, ...threads.slice(0, loaded).map(t => threadRow(t, unread(t), now, detail(t)))]
 }
 
 /** How many threads to have loaded once the cursor is on row `cursor` (row 0 is `+ New thread`). */
@@ -114,6 +128,21 @@ export function loadedFor(loaded: number, cursor: number, total: number, page = 
 }
 
 /** A solid bar beside the selected row reads at a glance; `>` is too thin on the display. */
+const DETAIL_SEP = ' · '
+/** Less than this and a detail says too little to be worth the room it takes from the title. */
+const MIN_DETAIL_PX = 70
+
+/** The title, then the detail in whatever room is left. The title keeps at least 55% of the room. */
+export function titleWithDetail(title: string, detail: string, room: number): string {
+  if (!detail) return fitWidth(title, room)
+  const titleRoom = Math.max(Math.floor(room * 0.55), Math.min(textWidth(title), room - MIN_DETAIL_PX - textWidth(DETAIL_SEP)))
+  const detailRoom = room - titleRoom - textWidth(DETAIL_SEP)
+  if (detailRoom < MIN_DETAIL_PX) return fitWidth(title, room)
+  const shownTitle = fitWidth(title, titleRoom)
+  const spare = room - textWidth(shownTitle) - textWidth(DETAIL_SEP)
+  return shownTitle + DETAIL_SEP + fitWidth(detail, spare)
+}
+
 /**
  * The list as two overlaid layers with identical line positions: every row except the selected one on
  * a dim layer, and only the selected row on a bright layer. Selection is shown by brightness alone, so
@@ -125,8 +154,8 @@ export function listLayers(rows: ListRow[], cursor: number, start: number, width
   const lines = shown.map(row => {
     const prefix = `${row.mark === 'add' ? '+' : MARK[row.mark]} `
     const side = row.side ? `  ${row.side}` : ''
-    const title = fitWidth(row.title, widthPx - textWidth(prefix) - textWidth(side) - 6)
-    const left = prefix + title
+    const room = widthPx - textWidth(prefix) - textWidth(side) - 6
+    const left = prefix + titleWithDetail(row.title, row.detail, room)
     return side ? left + alignRight(side, widthPx - textWidth(left) - 4) : left
   })
   const selected = cursor - start

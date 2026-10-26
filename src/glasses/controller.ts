@@ -19,7 +19,7 @@ import { fitWidth } from './font'
 import {
   alignRight, BAR_W, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
   listHeader, listStart, levelGlyph, markFor, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
-  buildRows, CLOCK_W, formatClock, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, type ListRow,
+  buildRows, CLOCK_W, formatClock, listDetail, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, type ListRow,
   approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
@@ -270,7 +270,22 @@ export class GlassesController {
   // --- list --------------------------------------------------------------------------------
 
   private rows(): ListRow[] {
-    return buildRows(this.threads, this.unread, Date.now(), this.fleet.state.machines.length > 1, this.loaded, this.fleet.state.settings.density === 'compact')
+    const { listFields } = this.fleet.state.settings
+    const several = this.fleet.state.machines.length > 1
+    const detail = (t: PinnedThread) => listDetail(listFields, t, this.machineOf(t)?.glance(t.id), several)
+    return buildRows(this.threads, this.unread, Date.now(), detail, this.loaded)
+  }
+
+  /** Tells each machine which threads the list is showing, so it can follow what they are doing. */
+  private watchVisible() {
+    const { listFields } = this.fleet.state.settings
+    const wants = { activity: listFields.includes('activity'), reply: listFields.includes('reply') }
+    // Rows are `+ New thread` then the threads; keep a little beyond the window so scrolling is instant.
+    const shown = this.threads.slice(0, this.loaded).slice(Math.max(0, this.listTop - 1), this.listTop + LIST_ROWS + 1)
+    for (const machine of this.fleet.state.machines) {
+      const machineObject = this.fleet.machine(machine.id)
+      machineObject?.watch(wants.activity || wants.reply ? shown.filter(t => t.machineId === machine.id) : [], wants)
+    }
   }
 
   private cursor(rows: ListRow[]): number {
@@ -279,6 +294,7 @@ export class GlassesController {
   }
 
   private renderList() {
+    this.watchVisible()
     const rows = this.rows()
     const cursor = this.cursor(rows)
     this.listTop = listStart(rows.length, cursor, this.listTop)

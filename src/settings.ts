@@ -18,9 +18,27 @@ export interface NewThreadSettings {
   /** How much the glasses fit on screen. The font itself has a fixed size. */
   density: Density
   clock: ClockFormat
+  /** Shown beside each thread title in the glasses list. */
+  listFields: ListField[]
 }
 
 export type Density = 'comfortable' | 'compact'
+
+/** What the thread list shows beside each title. Shown in this order, joined with " · ". */
+export type ListField = 'activity' | 'reply' | 'project' | 'machine'
+
+export const LIST_FIELDS: Array<{ value: ListField; label: string; hint: string }> = [
+  { value: 'activity', label: 'What it is doing', hint: 'The step a running thread is on, like $ pnpm test or edit auth.ts.' },
+  { value: 'reply', label: 'Latest reply', hint: "The start of the agent's newest message." },
+  { value: 'project', label: 'Project', hint: "The thread's project." },
+  { value: 'machine', label: 'Machine', hint: 'Which machine it runs on, when you have more than one.' },
+]
+
+/** Valid, de-duplicated and in display order. Anything that is not a list falls back to the default. */
+export function normalizeListFields(raw: unknown): ListField[] {
+  if (!Array.isArray(raw)) return [...DEFAULT_LIST_FIELDS]
+  return LIST_FIELDS.map(f => f.value).filter(v => raw.includes(v))
+}
 
 /** The time of day in the glasses' header row. */
 export type ClockFormat = 'off' | '12h' | '24h'
@@ -43,6 +61,8 @@ export const RUNTIME_MODES: Array<{ value: RuntimeMode; label: string }> = [
   { value: 'full-access', label: 'Full access' },
 ]
 
+const DEFAULT_LIST_FIELDS: ListField[] = ['activity', 'machine']
+
 export const DEFAULT_SETTINGS: NewThreadSettings = {
   projectId: 'scratch',
   instanceId: '',
@@ -52,6 +72,7 @@ export const DEFAULT_SETTINGS: NewThreadSettings = {
   sendDelay: DEFAULT_SEND_DELAY,
   density: 'comfortable',
   clock: '12h',
+  listFields: DEFAULT_LIST_FIELDS,
 }
 
 const KEY = 't3g2.settings'
@@ -71,6 +92,7 @@ export function normalizeSettings(raw: unknown): NewThreadSettings {
     sendDelay: normalizeSendDelay(o.sendDelay),
     density: o.density === 'compact' ? 'compact' : 'comfortable',
     clock: CLOCKS.some(c => c.value === o.clock) ? (o.clock as ClockFormat) : DEFAULT_SETTINGS.clock,
+    listFields: normalizeListFields(o.listFields),
   }
 }
 

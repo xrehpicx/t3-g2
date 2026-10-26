@@ -28,6 +28,7 @@ T3 Code G2 shows the threads you have pinned in T3 Code, live: which agents are 
 - Answer an agent's questions and approve its commands, by tapping an option or saying your answer
 - Start a new thread by voice, with the project, model and permissions you set on your phone
 - Several machines at once, merged into one list
+- Choose what the list shows beside each thread: what it is doing right now, its latest reply, project or machine
 - The time of day in the header (12-hour, 24-hour or hidden), and a compact or comfortable layout
 - Recording pauses instead of being lost when a notification needs a double tap, and a three-second window lets you cancel a voice message before it sends
 
