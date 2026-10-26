@@ -6,7 +6,6 @@ import { Select } from 'even-toolkit/web/select'
 import { SettingsGroup } from 'even-toolkit/web/settings-group'
 import { StatusDot } from 'even-toolkit/web/status-dot'
 import { Textarea } from 'even-toolkit/web/textarea'
-import { Toggle } from 'even-toolkit/web/toggle'
 import { CANDIDATE_ORIGINS, DEFAULT_SERVER } from '../config'
 import type { Fleet, FleetState, FoundMachine } from '../fleet'
 import { clock, markFor, MARK } from '../glasses/screens'
@@ -64,13 +63,14 @@ function Row({ label, children, hint }: { label: string; children: ReactNode; hi
   )
 }
 
-function ThreadRow({ thread, multi }: { thread: PinnedThread; multi: boolean }) {
+function ThreadRow({ thread, multi, onOpen }: { thread: PinnedThread; multi: boolean; onOpen: () => void }) {
   const mark = markFor(thread.status, thread.needsInput, false)
   const live = mark === 'run' || mark === 'ask'
   const trailing = mark === 'run' && thread.runStartedAt ? clock(Date.now() - Date.parse(thread.runStartedAt)) : ago(thread.updatedAt)
   return (
     <ListItem
       title={thread.title}
+      onPress={onOpen}
       subtitle={[MARK_LABEL[mark], multi ? thread.machineLabel : '', thread.project || 'No project'].filter(Boolean).join(' · ')}
       leading={<span className={`w-6 text-center text-[17px] ${live ? 'text-text' : 'text-text-dim'}`} aria-hidden>{MARK[mark]}</span>}
       trailing={<span className={`text-[13px] tabular-nums ${live ? 'text-text' : 'text-text-dim'}`}>{trailing}</span>}
@@ -166,6 +166,19 @@ export function App({ fleet }: { fleet: Fleet }) {
   }
   const [addOpen, setAddOpen] = useState(false)
 
+  const [toast, setToast] = useState<{ text: string; ok: boolean } | null>(null)
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 3500)
+    return () => clearTimeout(timer)
+  }, [toast])
+  const openOnGlasses = async (thread: PinnedThread) => {
+    const result = await fleet.openOnGlasses(thread.machineId, thread.id)
+    setToast(result === 'ok'
+      ? { text: `Opened “${thread.title}” on your glasses`, ok: true }
+      : { text: result === 'busy' ? 'Finish what you are doing on the glasses first' : 'Open this app from the glasses to connect them', ok: false })
+  }
+
   const s = state.settings
   const [voice, setVoice] = useState(s.voicePrompt)
   useEffect(() => setVoice(s.voicePrompt), [s.voicePrompt])
@@ -198,21 +211,17 @@ export function App({ fleet }: { fleet: Fleet }) {
         </span>
       </header>
 
+      {toast && (
+        <div role="status" className={`fixed inset-x-3 bottom-4 z-50 mx-auto max-w-xl rounded-[6px] px-4 py-3 text-[15px] shadow-lg ${toast.ok ? 'bg-accent text-text-highlight' : 'bg-negative text-text-highlight'}`}>{toast.text}</div>
+      )}
+
       {state.notice && <p className="mt-4 rounded-[6px] bg-negative-alpha px-4 py-3 text-[13px] text-negative">{state.notice}</p>}
 
       {state.machines.length > 0 && (
-        <Section label="On your glasses">
+        <Section label="Pinned threads · tap to open on your glasses">
           {state.threads.length
-            ? state.threads.map(t => <ThreadRow key={`${t.machineId}:${t.id}`} thread={t} multi={multi} />)
+            ? state.threads.map(t => <ThreadRow key={`${t.machineId}:${t.id}`} thread={t} multi={multi} onOpen={() => void openOnGlasses(t)} />)
             : <div className="bg-surface px-4 py-4 text-[15px] text-text-dim">Pin a thread in T3 and it shows up here and on your glasses.</div>}
-        </Section>
-      )}
-
-      {state.machines.length > 0 && (
-        <Section label="Glasses">
-          <Row label="Follow T3" hint="Open a thread on the glasses when you open it in T3 on another device. Never while you are talking or answering.">
-            <Toggle checked={s.followT3} onChange={followT3 => void fleet.updateSettings({ followT3 })} />
-          </Row>
         </Section>
       )}
 

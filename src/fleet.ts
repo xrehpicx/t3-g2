@@ -38,7 +38,8 @@ export interface FleetState {
 }
 
 type Listener = (state: FleetState) => void
-type OpenedListener = (machineId: string, threadId: string) => void
+/** The glasses screen, if one is connected. Returns false when it is busy (recording, sending). */
+export type OpenHandler = (machineId: string, threadId: string) => boolean | Promise<boolean>
 
 const MACHINES_KEY = 't3g2.machines'
 const DEFAULT_KEY = 't3g2.defaultMachine'
@@ -49,7 +50,7 @@ export class Fleet {
   state: FleetState = { phase: 'loading', machines: [], defaultMachineId: null, threads: [], settings: DEFAULT_SETTINGS, notice: null }
   private machines = new Map<string, Machine>()
   private listeners = new Set<Listener>()
-  private openedListeners = new Set<OpenedListener>()
+  private openHandler: OpenHandler | null = null
   private flush: ReturnType<typeof setTimeout> | undefined
 
   constructor(
@@ -63,10 +64,13 @@ export class Fleet {
     return () => this.listeners.delete(listener)
   }
 
-  /** Fires when a thread is opened in T3 on another device. */
-  subscribeOpened(listener: OpenedListener): () => void {
-    this.openedListeners.add(listener)
-    return () => this.openedListeners.delete(listener)
+  /** Registered by the glasses UI so the phone page can send a thread to it. */
+  setOpenHandler(handler: OpenHandler | null) { this.openHandler = handler }
+
+  /** Open a thread on the glasses. `no-glasses` when none are connected, `busy` mid-recording. */
+  async openOnGlasses(machineId: string, threadId: string): Promise<'ok' | 'busy' | 'no-glasses'> {
+    if (!this.openHandler) return 'no-glasses'
+    return (await this.openHandler(machineId, threadId)) ? 'ok' : 'busy'
   }
 
   machine(id: string | null | undefined): Machine | undefined {
@@ -126,7 +130,6 @@ export class Fleet {
   private attach(record: MachineRecord) {
     this.machines.get(record.id)?.stop()
     const machine = new Machine(this.net, record, () => this.recompute(), id => void this.authLost(id))
-    machine.onOpened = threadId => { for (const listener of this.openedListeners) listener(record.id, threadId) }
     this.machines.set(record.id, machine)
     machine.start()
   }

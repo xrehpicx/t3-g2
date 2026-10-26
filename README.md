@@ -11,7 +11,6 @@ It runs as an Even Hub app on your phone and talks straight to your own T3 serve
 ## On the glasses
 
 - **List**: your first five pinned threads (not settled or snoozed), with `▼ Show more` for the rest, with a status mark and a right-hand column: `▶ 3:12` running with its timer, `★` waiting for you, `●` new reply, `○` done, `■` failed. `+ New thread` is always first.
-- **Follows T3**: open a thread in T3 on any other device (web, desktop, mobile) and it opens on the glasses too. Turn this off in the phone settings. It never interrupts you while you are talking, sending or answering.
 - **Thread**: the latest messages, newest at the bottom, with a live line under them showing what the agent is doing (`▅ $ pnpm test`, `▃ edit auth.ts`, `▇ thinking`).
 - **Scrolling** follows new output. Swipe up to read back; it stops following and shows `▼ 3 new · tap for latest`. Tap, or swipe back to the bottom, to resume.
 - **Questions and approvals**: when an agent asks something, the live line says `★ a question for you · tap to answer`. Tap to answer one question at a time: swipe to an option, tap to pick (or tick, for multi-select), or hold to say your answer. Approvals (run a command, change files) work the same way with the agent's own options.
@@ -27,7 +26,7 @@ It runs as an Even Hub app on your phone and talks straight to your own T3 serve
 
 ## On the phone
 
-The app's page in the Even Realities app holds everything the glasses don't: your paired machines, settings for new threads (machine, project, model, permissions), and the instructions sent with each voice message. It also lists your pinned threads and can test each machine's connection.
+The app's page in the Even Realities app holds everything the glasses don't. Tap a pinned thread there to open it on your glasses. It also has your paired machines, settings for new threads (machine, project, model, permissions), and the instructions sent with each voice message. It also lists your pinned threads and can test each machine's connection.
 
 **Try it without a server:** tap on the glasses' first screen, or "Try the demo" on the phone.
 

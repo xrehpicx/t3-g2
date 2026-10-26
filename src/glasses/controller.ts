@@ -109,7 +109,7 @@ export class GlassesController {
     try { this.seen = JSON.parse((await this.store.get(SEEN_KEY)) ?? '{}') } catch { this.seen = {} }
     this.bridge.onEvenHubEvent(event => this.onEvent(event))
     this.fleet.subscribe(state => void this.onFleet(state))
-    this.fleet.subscribeOpened((machineId, threadId) => void this.followOpened(machineId, threadId))
+    this.fleet.setOpenHandler((machineId, threadId) => this.openFromPhone(machineId, threadId))
     // One clock drives timers, the activity spinner and the record meter. It only redraws what changed.
     setInterval(() => { this.tick++; void this.refresh() }, 1000)
     await this.onFleet(this.fleet.state)
@@ -300,20 +300,19 @@ export class GlassesController {
     if (thread) void this.open(thread)
   }
 
-  // --- following T3 ------------------------------------------------------------------------
+  // --- opened from the phone ---------------------------------------------------------------
 
   /**
-   * A thread was opened in T3 on another device: bring it up on the glasses. Never interrupts
-   * something in progress (talking, sending, answering, writing a new thread).
+   * The user tapped a thread on the phone page. Show it on the glasses from wherever they are, unless
+   * they are mid-recording or sending, which a tap on the phone must not throw away.
    */
-  private async followOpened(machineId: string, threadId: string) {
-    if (!this.fleet.state.settings.followT3) return
-    if (this.screen !== 'list' && this.screen !== 'thread') return
-    if (this.recorder.busy || this.sending) return
-    if (this.current?.machineId === machineId && this.current.id === threadId) return
+  private async openFromPhone(machineId: string, threadId: string): Promise<boolean> {
+    if (this.recorder.busy || this.sending) return false
     const thread = this.fleet.machine(machineId)?.thread(threadId)
-    if (!thread) return
+    if (!thread) return false
+    this.answer = null
     await this.open(thread)
+    return true
   }
 
   // --- thread ------------------------------------------------------------------------------

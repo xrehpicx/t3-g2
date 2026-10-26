@@ -45,3 +45,7 @@ if (hash.has('showcase') || (hash.has('demo') && !fleet.demoActive)) {
 }
 
 if (bridge) await new GlassesController(sdk, bridge, fleet, store).start()
+
+// #open=<thread id> does what tapping that thread on the phone page does (for testing the handoff).
+const openId = hash.get('open')
+if (openId && bridge) setTimeout(() => void fleet.openOnGlasses(fleet.defaultMachine?.id ?? '', openId), 1500)
