@@ -132,8 +132,28 @@ function PairForm({ fleet, origin, label }: { fleet: Fleet; origin?: string; lab
   )
 }
 
+export const REPO_URL = 'https://github.com/xrehpicx/t3-g2'
+
+/**
+ * The phone keyboard covers the bottom half of the screen, so a field near the bottom is hidden
+ * while typing. Scroll whatever gets focus up near the top once the keyboard has finished rising.
+ */
+function useScrollFocusedIntoView() {
+  useEffect(() => {
+    const onFocus = (event: FocusEvent) => {
+      const el = event.target as HTMLElement
+      if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return
+      // About a quarter of the way down: above the keyboard whether or not the WebView resizes for it.
+      setTimeout(() => window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.22, behavior: 'smooth' }), 350)
+    }
+    document.addEventListener('focusin', onFocus)
+    return () => document.removeEventListener('focusin', onFocus)
+  }, [])
+}
+
 export function App({ fleet }: { fleet: Fleet }) {
   const state = useFleet(fleet)
+  useScrollFocusedIntoView()
   const machine = fleet.defaultMachine
   const multi = state.machines.length > 1
   useTick(state.threads.some(t => t.runStartedAt))
@@ -202,7 +222,7 @@ export function App({ fleet }: { fleet: Fleet }) {
   const readOnly = state.machines.find(m => m.id === machine?.id && !m.canOperate)
 
   return (
-    <div className="min-h-screen bg-bg px-3 pt-4 pb-12 max-w-xl mx-auto">
+    <div className="min-h-screen bg-bg px-3 pt-4 max-w-xl mx-auto">
       <header className="flex items-center justify-between px-1">
         <h1 className="text-[24px] tracking-[-0.72px] font-normal m-0">T3 Code</h1>
         <span className="flex items-center gap-2 text-[13px] text-text-dim">
@@ -287,6 +307,12 @@ export function App({ fleet }: { fleet: Fleet }) {
         Get a pairing code on the machine running T3: <code className="font-mono">t3 auth pairing create --scope orchestration:read --scope orchestration:operate</code>
         {state.machines.length > 0 && ' · Swipe a machine left to remove it.'}
       </p>
+
+      {/* Always-present space so the last fields can scroll up above the keyboard, and a way to help. */}
+      <footer className="mt-12 pb-[60vh] px-1 text-[13px] text-text-dim">
+        <p className="m-0">Open source. Help make this better:</p>
+        <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-text underline break-all">{REPO_URL.replace('https://', '')}</a>
+      </footer>
     </div>
   )
 }
