@@ -1,7 +1,7 @@
 {
   "name": "t3-g2",
   "private": true,
-  "version": "0.1.11",
+  "version": "0.1.12",
   "type": "module",
   "scripts": {
     "dev": "vite --mode personal",
@@ -27,6 +27,7 @@
     "@evenrealities/evenhub-cli": "^0.2.0",
     "@evenrealities/evenhub-simulator": "^0.9.5",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
@@ -36,5 +37,8 @@
     "vitest": "^3.2.7"
   },
   "description": "Your pinned T3 Code threads on Even G2 glasses, live, with voice replies.",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.17"
+  }
 }

@@ -66,6 +66,21 @@ VITE_T3_CANDIDATES=https://my-mac.my-tailnet.ts.net,https://my-server.my-tailnet
 
 and build with `npm run pack:personal`.
 
+### Deploying
+
+Every push to `main` runs CI (typecheck, tests, pack, and a check that no personal address is in the public build). When the `version` in `app.json` is new, the `deploy` job also uploads that build to Even Hub as a **private** build. It never promotes, submits or publishes: submitting for review is a deliberate step in the [developer portal](https://hub.evenrealities.com), because a published version is permanent.
+
+To ship: bump `version` in `app.json` and `package.json`, merge to `main`, install the new private build from the Even app to try it, then submit it for review when happy.
+
+One-time setup, because Even's CLI only logs in interactively:
+
+```sh
+npx evenhub login                       # once, by hand
+gh secret set EVENHUB_CREDENTIALS < ~/.config/evenhub/credentials.yaml
+```
+
+The secret holds a refresh token, so treat it like a password. If uploads start failing with "credentials expired", repeat the two commands. Don't run `evenhub logout` afterwards: it revokes that token.
+
 ### Layout
 
 ```
