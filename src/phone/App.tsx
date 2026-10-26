@@ -10,7 +10,7 @@ import { CANDIDATE_ORIGINS, DEFAULT_SERVER } from '../config'
 import type { Fleet, FleetState, FoundMachine } from '../fleet'
 import { clock, markFor, MARK } from '../glasses/screens'
 import { SEND_DELAYS } from '../audio/hold'
-import { DEFAULT_SETTINGS, REPLY_FIT, DENSITIES, RUNTIME_MODES, type Density, type RuntimeMode } from '../settings'
+import { CLOCKS, DEFAULT_SETTINGS, REPLY_FIT, DENSITIES, RUNTIME_MODES, type ClockFormat, type Density, type RuntimeMode } from '../settings'
 import type { DiagStep } from '../t3/diagnose'
 import { SCRATCH } from '../t3/launch'
 import type { ServerConfig } from '../t3/serverConfig'
@@ -292,6 +292,9 @@ export function App({ fleet }: { fleet: Fleet }) {
         <Section label="Glasses display">
           <Row label="Density" hint="The glasses use one fixed font size, so this changes how much fits instead. Compact removes the gaps between chat messages and adds each thread's project to the list.">
             <Select value={s.density} options={DENSITIES} onValueChange={density => void fleet.updateSettings({ density: density as Density })} />
+          </Row>
+          <Row label="Clock" hint="The time of day at the top right of the thread list and of each thread.">
+            <Select value={s.clock} options={CLOCKS} onValueChange={clock => void fleet.updateSettings({ clock: clock as ClockFormat })} />
           </Row>
         </Section>
       )}

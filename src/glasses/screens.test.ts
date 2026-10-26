@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAFETY_PX, textWidth } from './font'
 import {
-  alignRight, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
+  alignRight, CLOCK_W, formatClock, chatBar, chatLines, clock, listLayers, listHeader, listStart, markFor,
   MAX_MESSAGES, NEW_ROW, rowY, scrollbar, spinner, levelGlyph, TEXT_W, threadRow, titleBadge,
 } from './screens'
 import type { PinnedThread, ThreadMessage } from '../t3/types'
@@ -252,5 +252,23 @@ describe('density', () => {
 describe('voice instructions in the chat', () => {
   it('collapse to "(voice message)", with the reply-size note appended', () => {
     expect(chatLines([msg('user', voiceText({ voicePrompt: DEFAULT_VOICE_PROMPT, density: 'compact' }))])).toEqual(['> (voice message)'])
+  })
+})
+
+describe('formatClock', () => {
+  const at = (h: number, m: number) => new Date(2026, 9, 27, h, m)
+  it('formats 12-hour, 24-hour and hidden', () => {
+    expect(formatClock(at(15, 5), '12h')).toBe('3:05 PM')
+    expect(formatClock(at(0, 7), '12h')).toBe('12:07 AM')
+    expect(formatClock(at(12, 0), '12h')).toBe('12:00 PM')
+    expect(formatClock(at(15, 5), '24h')).toBe('15:05')
+    expect(formatClock(at(0, 7), '24h')).toBe('00:07')
+    expect(formatClock(at(15, 5), 'off')).toBe('')
+  })
+  it('always fits the room reserved for it', () => {
+    for (let h = 0; h < 24; h++) for (const m of [0, 8, 41, 59]) {
+      const text = formatClock(at(h, m), '12h')
+      expect(textWidth(text) + SAFETY_PX).toBeLessThanOrEqual(CLOCK_W)
+    }
   })
 })

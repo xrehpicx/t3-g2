@@ -187,6 +187,18 @@ export function scrollbar(total: number, start: number, visibleRows: number): { 
 
 export const TITLE_SIDE_W = 150
 
+/** Room for the time of day at the right end of the header row. */
+export const CLOCK_W = 100
+
+/** "3:05 PM", "15:05", or '' when hidden. */
+export function formatClock(date: Date, format: 'off' | '12h' | '24h'): string {
+  if (format === 'off') return ''
+  const m = String(date.getMinutes()).padStart(2, '0')
+  const h = date.getHours()
+  if (format === '24h') return `${String(h).padStart(2, '0')}:${m}`
+  return `${h % 12 || 12}:${m} ${h < 12 ? 'AM' : 'PM'}`
+}
+
 /** Strips markdown markers the glasses can't render. */
 export function plainText(markdown: string): string {
   return markdown

@@ -26,7 +26,7 @@ It runs as an Even Hub app on your phone and talks straight to your own T3 serve
 
 ## On the phone
 
-The app's page in the Even Realities app holds everything the glasses don't. Tap a pinned thread there to open it on your glasses. It also has your paired machines, settings for new threads (machine, project, model, permissions), and the instructions sent with each voice message. It also lists your pinned threads and can test each machine's connection.
+The app's page in the Even Realities app holds everything the glasses don't. Tap a pinned thread there to open it on your glasses. Glasses display settings (density, and the clock in the header: 12-hour, 24-hour or hidden) live there too. It also has your paired machines, settings for new threads (machine, project, model, permissions), and the instructions sent with each voice message. It also lists your pinned threads and can test each machine's connection.
 
 **Try it without a server:** tap on the glasses' first screen, or "Try the demo" on the phone.
 

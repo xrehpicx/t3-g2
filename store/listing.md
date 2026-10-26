@@ -28,6 +28,7 @@ T3 Code G2 shows the threads you have pinned in T3 Code, live: which agents are 
 - Answer an agent's questions and approve its commands, by tapping an option or saying your answer
 - Start a new thread by voice, with the project, model and permissions you set on your phone
 - Several machines at once, merged into one list
+- The time of day in the header (12-hour, 24-hour or hidden), and a compact or comfortable layout
 - Recording pauses instead of being lost when a notification needs a double tap, and a three-second window lets you cancel a voice message before it sends
 
 T3 Code G2 connects only to T3 Code servers you run yourself (T3 Code is free and open source). Pair it the same way as T3's mobile app: run `t3 auth pairing create` and enter the code. It has no servers, accounts or analytics of its own.

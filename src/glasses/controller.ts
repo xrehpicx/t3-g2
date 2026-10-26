@@ -19,7 +19,7 @@ import { fitWidth } from './font'
 import {
   alignRight, BAR_W, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
   listHeader, listStart, levelGlyph, markFor, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
-  buildRows, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, type ListRow,
+  buildRows, CLOCK_W, formatClock, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, type ListRow,
   approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
@@ -43,7 +43,7 @@ const ROWS_TOTAL = 10
 
 /** Container ids/names are shared across screens; each screen uses a subset. */
 const C = {
-  head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'], prompt: [8, 'prompt'], thumb: [9, 'thumb'],
+  head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'], prompt: [8, 'prompt'], thumb: [9, 'thumb'], clock: [10, 'clock'],
 } as const
 type Slot = keyof typeof C
 
@@ -286,9 +286,12 @@ export class GlassesController {
     const width = FULL_W - (bar.thumb ? BAR_W + 4 : 0)
     const { dim, bright } = listLayers(rows, cursor, this.listTop, width)
     const header = listHeader(this.threads, this.fleet.state.machines.map(m => ({ label: m.label, connected: m.link === 'live' })))
-    return this.draw(`list:${bar.thumb ? 'bar' : 'nobar'}`, [
-      { slot: 'head', x: 0, y: rowY(0), w: FULL_W - HEADER_RIGHT_W, h: rowsH(1), text: fitWidth(header.left, FULL_W - HEADER_RIGHT_W - 8), brightness: BRIGHT },
-      { slot: 'side', x: FULL_W - HEADER_RIGHT_W, y: rowY(0), w: HEADER_RIGHT_W, h: rowsH(1), text: alignRight(fitWidth(header.right, HEADER_RIGHT_W - 8), HEADER_RIGHT_W), brightness: DIM },
+    const time = this.clockBox()
+    const edge = FULL_W - time.w // where the header's right-hand text must end
+    return this.draw(`list:${bar.thumb ? 'bar' : 'nobar'}:${time.w}`, [
+      { slot: 'head', x: 0, y: rowY(0), w: edge - HEADER_RIGHT_W, h: rowsH(1), text: fitWidth(header.left, edge - HEADER_RIGHT_W - 8), brightness: BRIGHT },
+      { slot: 'side', x: edge - HEADER_RIGHT_W, y: rowY(0), w: HEADER_RIGHT_W, h: rowsH(1), text: alignRight(fitWidth(header.right, HEADER_RIGHT_W - 8), HEADER_RIGHT_W), brightness: DIM },
+      ...time.boxes,
       // Two layers at the same position: the selected row is bright, the rest dim.
       { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: dim, brightness: 1 },
       { slot: 'selected', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: bright, brightness: BRIGHT },
@@ -409,6 +412,13 @@ export class GlassesController {
     return chatLines(this.live.messages, undefined, undefined, id => machine?.shell.threads.get(id)?.title, this.fleet.state.settings.density !== 'compact')
   }
 
+  /** The time of day at the right end of the header row, or nothing (and no reserved width) when hidden. */
+  private clockBox(): { w: number; boxes: Box[] } {
+    const text = formatClock(new Date(), this.fleet.state.settings.clock)
+    if (!text) return { w: 0, boxes: [] }
+    return { w: CLOCK_W, boxes: [{ slot: 'clock', x: FULL_W - CLOCK_W, y: rowY(0), w: CLOCK_W, h: rowsH(1), text: alignRight(text, CLOCK_W), brightness: DIM }] }
+  }
+
   private renderThread() {
     if (!this.current) return
     const thread = this.current
@@ -421,13 +431,16 @@ export class GlassesController {
     const mark = markFor(thread.status, thread.needsInput, false)
     const runMs = thread.runStartedAt ? Date.now() - Date.parse(thread.runStartedAt) : null
     const badge = alignRight(titleBadge(mark, runMs), TITLE_SIDE_W - 6)
+    const time = this.clockBox()
+    const edge = FULL_W - time.w
     const multi = this.fleet.state.machines.length > 1
     const title = [thread.title, multi ? thread.machineLabel : ''].filter(Boolean).join(' · ')
     const status = this.statusRow(busy)
     const bar = chatBar(lines.length, rows, this.scroll.fromBottom)
-    return this.draw(`thread:${keyOf(thread)}`, [
-      { slot: 'head', x: 0, y: rowY(0), w: FULL_W - TITLE_SIDE_W, h: rowsH(1), text: fitWidth(title, FULL_W - TITLE_SIDE_W - 8), brightness: BRIGHT },
-      { slot: 'side', x: FULL_W - TITLE_SIDE_W, y: rowY(0), w: TITLE_SIDE_W, h: rowsH(1), text: badge, brightness: mark === 'run' || mark === 'ask' ? BRIGHT : DIM },
+    return this.draw(`thread:${keyOf(thread)}:${time.w}`, [
+      { slot: 'head', x: 0, y: rowY(0), w: edge - TITLE_SIDE_W, h: rowsH(1), text: fitWidth(title, edge - TITLE_SIDE_W - 8), brightness: BRIGHT },
+      { slot: 'side', x: edge - TITLE_SIDE_W, y: rowY(0), w: TITLE_SIDE_W, h: rowsH(1), text: badge, brightness: mark === 'run' || mark === 'ask' ? BRIGHT : DIM },
+      ...time.boxes,
       // Chat sits between the title and the live line, so the newest activity is at the bottom, under the newest message.
       { slot: 'body', x: 0, y: rowY(1), w: TEXT_W, h: rowsH(rows), text: loading ? 'Loading…' : bottomAnchor(view.lines, rows) || 'No messages yet.', brightness: MID },
       ...this.barBoxes(bar, rowY(1), rowsH(rows)),

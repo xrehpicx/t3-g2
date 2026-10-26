@@ -17,9 +17,19 @@ export interface NewThreadSettings {
   sendDelay: number
   /** How much the glasses fit on screen. The font itself has a fixed size. */
   density: Density
+  clock: ClockFormat
 }
 
 export type Density = 'comfortable' | 'compact'
+
+/** The time of day in the glasses' header row. */
+export type ClockFormat = 'off' | '12h' | '24h'
+
+export const CLOCKS: Array<{ value: ClockFormat; label: string }> = [
+  { value: '12h', label: '12-hour (3:05 PM)' },
+  { value: '24h', label: '24-hour (15:05)' },
+  { value: 'off', label: 'Hidden' },
+]
 
 export const DENSITIES: Array<{ value: Density; label: string }> = [
   { value: 'comfortable', label: 'Comfortable' },
@@ -41,6 +51,7 @@ export const DEFAULT_SETTINGS: NewThreadSettings = {
   voicePrompt: DEFAULT_VOICE_PROMPT,
   sendDelay: DEFAULT_SEND_DELAY,
   density: 'comfortable',
+  clock: '12h',
 }
 
 const KEY = 't3g2.settings'
@@ -59,6 +70,7 @@ export function normalizeSettings(raw: unknown): NewThreadSettings {
     voicePrompt: upgradePrompt(text(o.voicePrompt, '').trim()),
     sendDelay: normalizeSendDelay(o.sendDelay),
     density: o.density === 'compact' ? 'compact' : 'comfortable',
+    clock: CLOCKS.some(c => c.value === o.clock) ? (o.clock as ClockFormat) : DEFAULT_SETTINGS.clock,
   }
 }
 
