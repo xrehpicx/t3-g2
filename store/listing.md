@@ -1,10 +1,10 @@
-# Even Hub store listing: T3 G2
+# Even Hub store listing: T3 Code G2
 
-**Name** (matches `app.json`): T3 G2
+**Name** (matches `app.json`): T3 Code G2
 
 **Category:** Productivity
 
-**Tags (max 5):** AI, coding, agents, developer, voice
+**Tags (max 5):** coding, agents, developer, voice, T3 Code
 
 **Cover image (576×288):** `store/screenshots/2-live-thread.png`
 
@@ -21,7 +21,7 @@
 
 Keep your coding agents moving from your glasses.
 
-T3 G2 shows the threads you have pinned in T3 Code, live: which agents are working and for how long, what each one is doing right now, and their replies as they stream in. Hold the touchpad to send a voice message. It steers the running agent, and the agent transcribes your audio on your own machine.
+T3 Code G2 shows the threads you have pinned in T3 Code, live: which agents are working and for how long, what each one is doing right now, and their replies as they stream in. Hold the touchpad to send a voice message. It steers the running agent, and the agent transcribes your audio on your own machine.
 
 - Pinned threads with live status: running with a timer, waiting for you, new reply, done, failed
 - Read a thread with the newest messages at the bottom; scroll back and it stops following until you tap
@@ -30,11 +30,12 @@ T3 G2 shows the threads you have pinned in T3 Code, live: which agents are worki
 - Several machines at once, merged into one list
 - Recording pauses instead of being lost when a notification needs a double tap
 
-T3 G2 connects only to T3 Code servers you run yourself (T3 Code is free and open source). Pair it the same way as T3's mobile app: run `t3 auth pairing create` and enter the code. It has no servers, accounts or analytics of its own.
+T3 Code G2 connects only to T3 Code servers you run yourself (T3 Code is free and open source). Pair it the same way as T3's mobile app: run `t3 auth pairing create` and enter the code. It has no servers, accounts or analytics of its own.
 
 No server yet? Tap on the first screen to try the demo.
 
 Open source: https://github.com/xrehpicx/t3-g2
+An independent client; not affiliated with T3 Tools or Even Realities.
 
 ## Privacy
 

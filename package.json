@@ -1,7 +1,7 @@
 {
-  "name": "t3-g2",
+  "name": "t3-code-g2",
   "private": true,
-  "version": "0.1.12",
+  "version": "0.1.13",
   "type": "module",
   "scripts": {
     "dev": "vite --mode personal",
@@ -37,8 +37,5 @@
     "vitest": "^3.2.7"
   },
   "description": "Your pinned T3 Code threads on Even G2 glasses, live, with voice replies.",
-  "license": "MIT",
-  "engines": {
-    "node": ">=20.17"
-  }
+  "license": "MIT"
 }

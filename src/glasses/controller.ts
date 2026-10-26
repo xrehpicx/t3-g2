@@ -118,11 +118,11 @@ export class GlassesController {
   // --- state -------------------------------------------------------------------------------
 
   private async onFleet(state: FleetState) {
-    if (state.phase === 'loading') return this.showMessage('T3', 'Connecting...')
+    if (state.phase === 'loading') return this.showMessage('T3 Code', 'Connecting...')
     if (state.phase === 'unpaired') {
       this.closeThreadStream()
       this.screen = 'status'
-      return this.showMessage('T3', 'Not connected.\n\nOpen this app on your phone\nand pair it with your T3 machine.\n\nTap to try the demo.')
+      return this.showMessage('T3 Code', 'Not connected.\n\nOpen this app on your phone\nand pair it with your T3 Code machine.\n\nTap to try the demo.')
     }
     this.threads = state.threads
     this.markFirstSeen()
@@ -135,7 +135,7 @@ export class GlassesController {
     const unreachable = state.machines.length > 0 && state.machines.every(m => m.link !== 'live' && m.error)
     if (unreachable && !state.threads.length) {
       this.screen = 'status'
-      return this.showMessage('T3', `Can't reach your machine.\n\n${state.machines[0]?.error ?? ''}\nRetrying...`)
+      return this.showMessage('T3 Code', `Can't reach your machine.\n\n${state.machines[0]?.error ?? ''}\nRetrying...`)
     }
     if (this.screen !== 'list') { this.screen = 'list'; this.layout = '' }
     return this.renderList()

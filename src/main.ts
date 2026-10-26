@@ -19,7 +19,7 @@ const bridge = await Promise.race([
   new Promise<null>(resolve => setTimeout(() => resolve(null), 2500)),
 ])
 const store = bridge ? bridgeStore(bridge) : browserStore
-const fleet = new Fleet(net, store, 'T3 on G2')
+const fleet = new Fleet(net, store, 'T3 Code G2')
 
 createRoot(root).render(createElement(App, { fleet }))
 await fleet.init()

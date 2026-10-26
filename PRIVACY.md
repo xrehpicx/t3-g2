@@ -1,8 +1,8 @@
-# Privacy policy: T3 G2
+# Privacy policy: T3 Code G2
 
 _Last updated: 2026-10-27_
 
-T3 G2 is a client for [T3 Code](https://github.com/pingdotgg/t3code) servers that you run yourself. It has no backend of its own, no accounts, no analytics and no tracking.
+T3 Code G2 is a client for [T3 Code](https://github.com/pingdotgg/t3code) servers that you run yourself. It has no backend of its own, no accounts, no analytics and no tracking.
 
 ## What the app connects to
 

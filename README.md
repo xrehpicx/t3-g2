@@ -1,4 +1,4 @@
-# T3 G2
+# T3 Code G2
 
 Your pinned [T3 Code](https://github.com/pingdotgg/t3code) threads on Even Realities G2 glasses: what each agent is doing right now, its replies as they stream in, and push-to-talk voice messages that steer it. Start new threads by voice too.
 
@@ -42,7 +42,7 @@ The app's page in the Even Realities app holds everything the glasses don't. Tap
    t3 auth pairing create --scope orchestration:read --scope orchestration:operate
    ```
    Leave out `orchestration:operate` for a watch-only pairing.
-3. Open T3 G2 in the Even Realities app, enter the address and code. Pair more machines the same way; their pinned threads are merged.
+3. Open T3 Code G2 in the Even Realities app, enter the address and code. Pair more machines the same way; their pinned threads are merged.
 
 Voice messages are transcribed by the agent on the machine running the thread, so that machine needs speech-to-text, for example [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`brew install whisper-cpp`) with a model in `~/.cache/whisper-models`. The instructions sent with each voice message can be edited on the phone.
 
@@ -65,21 +65,6 @@ VITE_T3_CANDIDATES=https://my-mac.my-tailnet.ts.net,https://my-server.my-tailnet
 ```
 
 and build with `npm run pack:personal`.
-
-### Deploying
-
-Every push to `main` runs CI (typecheck, tests, pack, and a check that no personal address is in the public build). When the `version` in `app.json` is new, the `deploy` job also uploads that build to Even Hub as a **private** build. It never promotes, submits or publishes: submitting for review is a deliberate step in the [developer portal](https://hub.evenrealities.com), because a published version is permanent.
-
-To ship: bump `version` in `app.json` and `package.json`, merge to `main`, install the new private build from the Even app to try it, then submit it for review when happy.
-
-One-time setup, because Even's CLI only logs in interactively:
-
-```sh
-npx evenhub login                       # once, by hand
-gh secret set EVENHUB_CREDENTIALS < ~/.config/evenhub/credentials.yaml
-```
-
-The secret holds a refresh token, so treat it like a password. If uploads start failing with "credentials expired", repeat the two commands. Don't run `evenhub logout` afterwards: it revokes that token.
 
 ### Layout
 
@@ -106,4 +91,4 @@ See [PRIVACY.md](PRIVACY.md). In short: the app only talks to servers you pair, 
 
 ## License
 
-MIT. Not affiliated with Even Realities or T3 Tools.
+MIT. Not affiliated with Even Realities or T3 Tools. "T3 Code" is the name of their product; this is an independent client for it.

@@ -204,7 +204,7 @@ export function App({ fleet }: { fleet: Fleet }) {
   return (
     <div className="min-h-screen bg-bg px-3 pt-4 pb-12 max-w-xl mx-auto">
       <header className="flex items-center justify-between px-1">
-        <h1 className="text-[24px] tracking-[-0.72px] font-normal m-0">T3</h1>
+        <h1 className="text-[24px] tracking-[-0.72px] font-normal m-0">T3 Code</h1>
         <span className="flex items-center gap-2 text-[13px] text-text-dim">
           <StatusDot connected={state.machines.length > 0 && live === state.machines.length} />
           {state.phase === 'loading' ? 'Starting…' : status}
