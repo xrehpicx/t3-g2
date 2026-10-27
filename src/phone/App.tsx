@@ -100,7 +100,7 @@ export function App({ fleet }: { fleet: Fleet }) {
         {/* Always-present space so the last fields can scroll up above the keyboard, and a way to help. */}
         <footer className="mt-12 pb-[60vh] px-1 text-[13px] text-text-dim">
           <p className="m-0">Open source. Help make this better:</p>
-          <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-text underline break-all">{REPO_URL.replace('https://', '')}</a>
+          <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-text underline break-all">{REPO_URL.replace(/^\w+:\/\//, '')}</a>
         </footer>
       </main>
     </div>

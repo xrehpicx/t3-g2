@@ -20,4 +20,6 @@ if (personal && existsSync('.env.personal.local')) {
 mkdirSync('build', { recursive: true })
 writeFileSync('build/app.json', JSON.stringify(manifest, null, 2) + '\n')
 console.log(`whitelist (${personal ? 'personal' : 'public'}):`, network.whitelist.join(' '))
+// What the store review checks: nothing in the bundle may name a URL outside the whitelist.
+execFileSync('node', ['scripts/check-urls.mjs', 'build/app.json', 'dist'], { stdio: 'inherit' })
 execFileSync('npx', ['evenhub', 'pack', 'build/app.json', 'dist', '-o', 't3-g2.ehpk'], { stdio: 'inherit' })

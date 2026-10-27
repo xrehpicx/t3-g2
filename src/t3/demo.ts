@@ -55,7 +55,7 @@ export class DemoMachine extends Machine {
     super(net, {
       id: DEMO_ID,
       label: showcase ? 'MacBook Pro' : 'Demo',
-      session: { origin: 'https://demo.invalid', accessToken: 'demo', expiresAt: Number.MAX_SAFE_INTEGER, scope: 'orchestration:read orchestration:operate' },
+      session: { origin: 'demo://local', accessToken: 'demo', expiresAt: Number.MAX_SAFE_INTEGER, scope: 'orchestration:read orchestration:operate' },
     }, onChange, () => {})
     this.seed()
   }
