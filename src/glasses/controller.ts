@@ -68,6 +68,24 @@ const MAX_TEXT_BOXES = 7
 /** Dropped first, if a page would have too many: the scrollbar, then the clock, then the dim layer. */
 const SHED_ORDER: Slot[] = ['thumb', 'bar', 'clock', 'prompt']
 const IMAGE_ID = 11
+
+const encoder = new TextEncoder()
+/** A menu label within the firmware's 32 UTF-8 bytes, cut on a character boundary. */
+export function menuLabel(name: string): string {
+  const clean = name.replace(/\s+/g, ' ').trim() || '·'
+  if (encoder.encode(clean).length <= 32) return clean
+  let out = ''
+  for (const char of clean) {
+    if (encoder.encode(`${out}${char}…`).length > 32) break
+    out += char
+  }
+  return `${out.trimEnd()}…`
+}
+/** How long a first tap stays armed, waiting for the second. */
+const ARM_MS = 6_000
+const MENU_ALLOW = 12
+const MENU_DENY = 13
+const MENU_OPEN_ALERT = 14
 const IMAGE_NAME = 'image'
 
 /** A picture on a page: a PNG for the glasses' image container. */
@@ -130,7 +148,15 @@ export class GlassesController {
   private pageCursor = 0
   /** A limit whose reset credit is waiting for a second tap to confirm. */
   /** Something waiting for a second tap to confirm: a reset credit, an approval, a task run. */
-  private armed: { kind: 'reset' | 'allow' | 'task'; key: string } | null = null
+  private armedState: { kind: 'reset' | 'allow' | 'task'; key: string; until: number } | null = null
+  /** A first tap waiting for the second, until it expires (so a stray tap minutes later cannot confirm it). */
+  private get armed(): { kind: 'reset' | 'allow' | 'task'; key: string } | null {
+    if (this.armedState && Date.now() > this.armedState.until) this.armedState = null
+    return this.armedState
+  }
+  private set armed(value: { kind: 'reset' | 'allow' | 'task'; key: string } | null) {
+    this.armedState = value ? { ...value, until: Date.now() + ARM_MS } : null
+  }
   /** The provider whose accounts the Usage page is listing; null is the overview. */
   private usageDriver: string | null = null
   private pageImage: { key: string; png: RenderedImage | null } | null = null
@@ -246,6 +272,11 @@ export class GlassesController {
   private draw(nextLayout: string, nextBoxes: Box[], menu?: Array<[number, string]>, image?: ImageSlot): Promise<void> {
     // Only the newest frame matters: a frame queued behind a slow BLE update is dropped rather than
     // painted late over a newer screen.
+    // The firmware takes at most 10 menu items of 32 bytes each, and rejects the whole page otherwise.
+    if (menu) {
+      const ids = new Set<number>()
+      menu = menu.filter(([id]) => (ids.has(id) ? false : (ids.add(id), true))).slice(0, 10).map(([id, name]) => [id, menuLabel(name)])
+    }
     // The menu and picture are only applied when the page is rebuilt, so a change to either is a new layout.
     const signature = `${nextLayout}|${menu ? menu.map(([id, name]) => `${id}=${name}`).join(',') : ''}|${image?.key ?? ''}`
     // Past the container limit the firmware rejects the whole page and keeps showing the old one, so
@@ -401,7 +432,7 @@ export class GlassesController {
       { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: dim, brightness: 1 },
       { slot: 'selected', x: 0, y: rowY(1), w: width, h: rowsH(LIST_ROWS), text: bright, brightness: BRIGHT },
       ...(bar.thumb ? this.barBoxes(bar, rowY(1), rowsH(LIST_ROWS)) : []),
-    ], [...this.pageMenu(), [MENU_JUMP_TOP, 'Jump to top'], [MENU_NEW_PAGE, 'New page by voice']])
+    ], [...this.alertMenu(), ...this.pageMenu(), [MENU_JUMP_TOP, 'Jump to top'], [MENU_NEW_PAGE, 'New page by voice']])
   }
 
   // --- pages -------------------------------------------------------------------------------
@@ -448,8 +479,14 @@ export class GlassesController {
     return this.pages.slice(0, 6).map((page, i) => [MENU_PAGE + i, `${page === this.page ? '● ' : ''}${this.pageLabel(page)}`])
   }
 
+  /** Stops following the threads a list or the dashboard was showing; the next page says what it needs. */
+  private unwatchAll() {
+    for (const m of this.fleet.state.machines) this.fleet.machine(m.id)?.watch([], { activity: false, reply: false })
+  }
+
   private switchPage(page: Page) {
     if (!this.pages.includes(page)) return
+    this.unwatchAll()
     this.page = page
     this.cursorKey = 'new'
     this.listTop = 0
@@ -507,7 +544,8 @@ export class GlassesController {
     const hasDim = !foldDim && lines.some(l => l.dim)
     return this.draw(`page:${kind}:${bar.thumb ? 'bar' : 'nobar'}:${choosable ? 'sel' : 'view'}:${hasDim ? 'dim' : 'flat'}:${head.key}`, [
       ...head.boxes,
-      { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && (foldDim || !l.dim)), brightness: MID },
+      // With a choice on the page, everything else steps down so the highlighted line stands out.
+      { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && (foldDim || !l.dim)), brightness: choosable ? DIM : MID },
       ...(hasDim ? [{ slot: 'prompt' as const, x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && Boolean(l.dim)), brightness: 1 }] : []),
       ...(choosable ? [{ slot: 'selected' as const, x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(chosen), brightness: BRIGHT }] : []),
       ...(bar.thumb ? this.barBoxes(bar, rowY(1), rowsH(PAGE_ROWS)) : []),
@@ -562,12 +600,13 @@ export class GlassesController {
     const asking = selected ? input.threads.find(t => askKey(t) === selected) : undefined
     const request = asking ? input.request(asking) : null
     const status = this.armed?.kind === 'allow' && asking
-      ? { text: `tap again: allow · hold: deny · swipe: cancel`, brightness: BRIGHT }
+      ? { text: `tap again to allow · swipe: cancel · menu: deny`, brightness: BRIGHT }
       : this.notice ? this.pageNotice('')
-      : asking ? this.pageNotice(request?.kind === 'approval' ? 'tap: allow (asks first) · hold: deny' : 'tap: open and answer')
+      : asking ? this.pageNotice(request?.kind === 'approval' ? 'tap twice: allow · menu: deny' : 'tap: open and answer')
       : this.pageNotice('tap+hold: pages')
     // The summary ("★ 2 need you ▶ 1 running") is the header; the page needs no title.
-    return this.drawPage('dashboard', summary.text, lines, selected, status, [...this.pageMenu(), [MENU_REFRESH, 'Refresh']])
+    const actions: Array<[number, string]> = request?.kind === 'approval' ? [[MENU_ALLOW, 'Allow'], [MENU_DENY, 'Deny']] : []
+    return this.drawPage('dashboard', summary.text, lines, selected, status, [...this.alertMenu(), ...actions, ...this.pageMenu(), [MENU_REFRESH, 'Refresh']])
   }
 
   /** The thread on the dashboard's highlighted line, with what it is waiting on. */
@@ -590,12 +629,12 @@ export class GlassesController {
     await this.answerApproval(thread, request, machine, 'allow')
   }
 
-  /** Hold on an approval denies it, straight away: denying is always safe. */
-  private async holdDashboard() {
+  /** Allow or deny from the menu: an explicit choice, so no second tap. */
+  private async decideDashboard(which: 'allow' | 'deny') {
     const asked = this.askedThread()
     if (!asked || asked.request?.kind !== 'approval') return
     this.armed = null
-    await this.answerApproval(asked.thread, asked.request, asked.machine, 'deny')
+    await this.answerApproval(asked.thread, asked.request, asked.machine, which)
   }
 
   private async answerApproval(thread: PinnedThread, request: Extract<PendingRequest, { kind: 'approval' }>, machine: Machine | undefined, which: 'allow' | 'deny') {
@@ -622,7 +661,7 @@ export class GlassesController {
       : this.notice ? this.pageNotice('')
       : this.usageDriver ? this.pageNotice(account?.credits ? 'tap: use a reset credit · double tap: back' : 'swipe: accounts · double tap: back')
       : this.pageNotice(selected ? 'tap: see each account · swipe: next provider' : 'tap+hold: pages')
-    const menu: Array<[number, string]> = [...this.pageMenu(), [MENU_REFRESH, 'Refresh'], ...(this.usageDriver ? [[MENU_BACK, 'Back to overview'] as [number, string]] : [])]
+    const menu: Array<[number, string]> = [...this.alertMenu(), ...this.pageMenu(), [MENU_REFRESH, 'Refresh'], ...(this.usageDriver ? [[MENU_BACK, 'Back to overview'] as [number, string]] : [])]
     const title = this.usageDriver ? `${families(usageAccounts(machines)).find(f => f.driver === this.usageDriver)?.provider ?? 'Usage'} accounts` : 'Usage'
     return this.drawPage(`usage:${this.usageDriver ?? ''}`, title, lines, selected, status, menu)
   }
@@ -681,11 +720,12 @@ export class GlassesController {
     const status = this.armed?.kind === 'task' && chosen
       ? { text: `tap again: run "${chosen.task.title}" now · swipe: cancel`, brightness: BRIGHT }
       : this.notice ? this.pageNotice('')
-      : chosen ? this.pageNotice(chosen.task.enabled ? 'tap: run now (asks first) · hold: pause' : 'hold: resume')
+      : chosen ? this.pageNotice(chosen.task.enabled ? 'tap twice: run now · menu: pause' : 'paused · menu: resume')
       : this.pageNotice('tap+hold: pages')
     const menu: Array<[number, string]> = [
-      ...this.pageMenu(),
+      ...this.alertMenu(),
       ...(chosen ? [[MENU_TASK_RUN, 'Run now'], [MENU_TASK_PAUSE, chosen.task.enabled ? 'Pause' : 'Resume']] as Array<[number, string]> : []),
+      ...this.pageMenu(),
       [MENU_REFRESH, 'Refresh'],
     ]
     return this.drawPage('tasks', 'Scheduled tasks', lines, selected, status, menu)
@@ -694,7 +734,7 @@ export class GlassesController {
   private async tapTasks() {
     const chosen = this.selectedTask()
     if (!chosen) return
-    if (!chosen.task.enabled) return this.showNotice('Paused. Hold to resume it.', 3000)
+    if (!chosen.task.enabled) return this.showNotice('Paused. Resume it from the menu.', 3000)
     if (this.armed?.kind !== 'task' || this.armed.key !== chosen.key) { this.armed = { kind: 'task', key: chosen.key }; return void this.renderTasks() }
     this.armed = null
     await this.runSelectedTask()
@@ -759,7 +799,7 @@ export class GlassesController {
       : this.pageNotice([updated, 'hold: change this page'].filter(Boolean).join('   ·   '))
     const title = meta.title || thread?.title || 'Page'
     const slot: ImageSlot | undefined = image ? { key: image.key, x: FULL_W - BAR_W - 4 - image.w, y: rowY(1), w: image.w, h: image.h, png: image.png } : undefined
-    return this.drawPage(`tpage:${page}`, title, lines, null, status, [...this.pageMenu(), ...this.voiceMenu(), [MENU_PAGE_REFRESH, 'Update this page'], [MENU_NEW_PAGE, 'New page by voice']], slot)
+    return this.drawPage(`tpage:${page}`, title, lines, null, status, [...this.voiceMenu(), ...this.alertMenu(), [MENU_PAGE_REFRESH, 'Update this page'], ...this.pageMenu(), [MENU_NEW_PAGE, 'New page by voice']], slot)
   }
 
   /** The picture for a page's SVG: drawn once per distinct SVG, shown when ready. */
@@ -767,7 +807,8 @@ export class GlassesController {
     const key = hashText(svg)
     if (this.pageImage?.key === key) return this.pageImage.png ? { key, ...this.pageImage.png } : null
     this.pageImage = { key, png: null }
-    void renderSvgPng(svg).then(rendered => {
+    // A WebView that will not draw the SVG (or read the canvas back) just shows no picture.
+    void renderSvgPng(svg).catch(() => null).then(rendered => {
       if (this.pageImage?.key !== key) return
       this.pageImage = { key, png: rendered }
       if (rendered) this.scheduleRender()
@@ -843,6 +884,7 @@ export class GlassesController {
   private async open(thread: PinnedThread) {
     this.closeThreadStream()
     this.closePageStream()
+    this.unwatchAll()
     const machine = this.machineOf(thread)
     if (!machine) return
     this.current = thread
@@ -939,7 +981,7 @@ export class GlassesController {
       { slot: 'body', x: 0, y: rowY(1), w: TEXT_W, h: rowsH(rows), text: loading ? 'Loading…' : bottomAnchor(view.lines, rows) || 'No messages yet.', brightness: MID },
       ...this.barBoxes(bar, rowY(1), rowsH(rows)),
       { slot: 'status', x: 0, y: rowY(1 + rows), w: FULL_W, h: rowsH(1), text: fitWidth(status.text, FULL_W - 4), brightness: status.brightness },
-    ], [...this.voiceMenu(), ...this.quickMenu()])
+    ], [...this.voiceMenu(), ...this.alertMenu(), ...this.quickMenu()])
   }
 
   // --- answering ---------------------------------------------------------------------------
@@ -1141,7 +1183,7 @@ export class GlassesController {
     // Threads behind pages are not pinned or listed, so look them up by id.
     const pageThreads = state.settings.threadPages.flatMap(p => { const t = this.fleet.machine(p.machineId)?.thread(p.threadId); return t ? [t] : [] })
     const pageKeys = new Set(pageThreads.map(keyOf))
-    const next = snapshotOf([...state.threads, ...pageThreads], pageKeys)
+    const next = snapshotOf([...state.threads, ...state.others, ...pageThreads], pageKeys)
     const changes = threadAlerts(this.lastSnap, next, alerts).filter(a => !this.isWatching(a))
     this.lastSnap = next
 
@@ -1167,6 +1209,12 @@ export class GlassesController {
       if (thread) void this.open(thread)
     }
     return true
+  }
+
+  /** While an alert shows, the menu offers to open what it is about. */
+  private alertMenu(): Array<[number, string]> {
+    const alert = this.activeAlert()
+    return alert?.action ? [[MENU_OPEN_ALERT, alert.action === 'usage' ? 'Open Usage' : `Open: ${alert.text.replace(/^\S+\s/, '')}`]] : []
   }
 
   /** Canned replies in the thread menu: one tap sends the words. */
@@ -1372,6 +1420,10 @@ export class GlassesController {
         void this.toggleSelectedTask()
       } else if (item === MENU_PAGE_REFRESH) {
         void this.refreshThreadPage()
+      } else if (item === MENU_OPEN_ALERT) {
+        this.followAlert()
+      } else if (item === MENU_ALLOW || item === MENU_DENY) {
+        void this.decideDashboard(item === MENU_ALLOW ? 'allow' : 'deny')
       } else if (item === MENU_REFRESH) {
         for (const m of this.fleet.state.machines) this.fleet.machine(m.id)?.refreshInsights(true)
       } else if (item === MENU_NEW_PAGE) {
@@ -1420,8 +1472,6 @@ export class GlassesController {
       if (this.latched && !this.recorder.paused) return // hands-free: the touchpad is not held
       this.latched = false // holding to continue a paused hands-free recording goes back to push-to-talk
       if (this.screen === 'list' && this.page && isThreadPage(this.page)) void this.startRecording()
-      else if (this.screen === 'list' && this.page === 'dashboard') void this.holdDashboard()
-      else if (this.screen === 'list' && this.page === 'tasks') void this.toggleSelectedTask()
       else if (this.screen === 'list') { if (this.page === 'pinned' || this.page === 'chats') this.jumpToTop() }
       else void this.startRecording()
       return
@@ -1446,7 +1496,6 @@ export class GlassesController {
 
     if (any(T.CLICK_EVENT)) {
       if (this.screen === 'status' && this.fleet.state.phase === 'unpaired') { void this.fleet.startDemo(); return }
-      if (this.screen === 'list' && this.followAlert()) return
       if (this.screen === 'list' && this.page === 'usage') void this.tapUsage()
       else if (this.screen === 'list' && this.page === 'dashboard') void this.tapDashboard()
       else if (this.screen === 'list' && this.page === 'tasks') void this.tapTasks()

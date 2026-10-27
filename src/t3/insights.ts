@@ -64,35 +64,43 @@ export const isMissing = (value: unknown): value is Missing => Boolean(value && 
 // --- reading --------------------------------------------------------------------------------
 
 /**
- * The accounts behind a usage-limit source (a proxy holding several subscriptions). The server
- * announces them on its config stream, so listen until the first announcement, then hang up.
+ * Every account's limits, from the server's config stream: its first item is the configuration (with
+ * each signed-in provider's limits), and a usage-limit source (a proxy holding several subscriptions)
+ * announces its accounts right after. This reads what the server already knows, without asking it to
+ * probe every provider again, then hangs up.
  */
-export function readSources(net: Net, session: Session, timeoutMs = 12_000): Promise<RawSource[]> {
-  return new Promise(resolve => {
+export function readLimits(net: Net, session: Session, machineId: string, timeoutMs = 15_000, sourceGraceMs = 4_000): Promise<LimitAccount[]> {
+  return new Promise((resolve, reject) => {
+    let providers: Parameters<typeof providerAccounts>[0] | null = null
+    let sources: RawSource[] | null = null
     let done = false
-    const finish = (sources: RawSource[]) => {
+    let grace: ReturnType<typeof setTimeout> | undefined
+    const finish = () => {
       if (done) return
       done = true
       clearTimeout(timer)
+      clearTimeout(grace)
       handle.close()
-      resolve(sources)
+      if (!providers && !sources) return reject(new Error('The server did not report its limits.'))
+      resolve(mergeAccounts(providerAccounts(providers ?? [], machineId), sourceAccounts(sources ?? [], machineId)))
     }
-    const handle = openStream<{ type?: string; payload?: { sources?: RawSource[] } }>({
+    const handle = openStream<{ type?: string; config?: { providers?: Parameters<typeof providerAccounts>[0] }; payload?: { sources?: RawSource[] } }>({
       net, session, tag: 'subscribeServerConfig',
       payload: () => ({ usageLimitSources: true, workspaceSnapshotsOnDemand: true }),
-      onItem: item => { if (item.type === 'usageLimitSourcesUpdated') finish(item.payload?.sources ?? []) },
+      onItem: item => {
+        if (item.type === 'snapshot') {
+          providers = item.config?.providers ?? []
+          // A server with no limit source sends nothing more; give one a moment, then stop waiting.
+          if (sources) finish()
+          else grace = setTimeout(finish, sourceGraceMs)
+        } else if (item.type === 'usageLimitSourcesUpdated') {
+          sources = item.payload?.sources ?? []
+          if (providers) finish()
+        }
+      },
     })
-    const timer = setTimeout(() => finish([]), timeoutMs)
+    const timer = setTimeout(finish, timeoutMs)
   })
-}
-
-/** Every account's limits. A source that cannot be reached just contributes nothing. */
-export async function readLimits(net: Net, session: Session, machineId: string): Promise<LimitAccount[]> {
-  const [providers, sources] = await Promise.all([
-    rpc<{ providers: Parameters<typeof providerAccounts>[0] }>(net, session, 'server.refreshProviders', { workspaceSnapshotsOnDemand: true }),
-    readSources(net, session).catch(() => [] as RawSource[]),
-  ])
-  return mergeAccounts(providerAccounts(providers.providers ?? [], machineId), sourceAccounts(sources, machineId))
 }
 
 interface RawBucket {

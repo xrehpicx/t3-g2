@@ -9,7 +9,7 @@ export function AlertsTab({ fleet, state }: { fleet: Fleet; state: FleetState })
   const set = (patch: Partial<AlertSettings>) => void fleet.updateSettings({ alerts: { ...a, ...patch } })
   return (
     <>
-      <Section label="Tell me on the glasses when" note="A message replaces the top row for a few seconds. Tap it to open the thread, or the Usage page for limits.">
+      <Section label="Tell me on the glasses when" note="A message replaces the top row for a few seconds. While it shows, tap then hold opens the menu with a way to open the thread (or the Usage page, for limits).">
         <ToggleRow label="A thread needs me" hint="It asks a question or wants an approval." checked={a.needsYou} onChange={needsYou => set({ needsYou })} />
         <ToggleRow label="A thread finishes" checked={a.finished} onChange={finished => set({ finished })} />
         <ToggleRow label="A thread fails" checked={a.failed} onChange={failed => set({ failed })} />

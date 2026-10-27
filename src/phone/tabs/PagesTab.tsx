@@ -30,7 +30,7 @@ export function PagesTab({ fleet, state, onToast }: { fleet: Fleet; state: Fleet
         <Row label="Open on">
           <Select value={s.startPage} options={s.pages.map(p => ({ value: p, label: label(p) }))} onValueChange={startPage => void fleet.updateSettings({ startPage: startPage as Page })} />
         </Row>
-        <ToggleRow label="Answer from the dashboard" hint="Allow or deny an agent's approval right from the dashboard's “needs you” lines." checked={s.dashboardActions} onChange={dashboardActions => void fleet.updateSettings({ dashboardActions })} />
+        <ToggleRow label="Answer from the dashboard" hint="Swipe to a “needs you” line on the dashboard: tap twice to allow an approval, or pick Allow or Deny in the menu." checked={s.dashboardActions} onChange={dashboardActions => void fleet.updateSettings({ dashboardActions })} />
       </Section>
 
       {s.threadPages.length > 0 && (

@@ -20,10 +20,10 @@ The glasses have pages. Tap, then hold, to open the menu and switch; double tap 
 - **Chats**: every other open thread, newest first.
 - **Dashboard**: what needs you (tap to open it), what is running and what each is doing, each machine's CPU and memory, today's spend, the busiest usage limit and the next scheduled run.
 - **Usage**: every provider's limits, pooled across all its accounts. With a usage-limit source (a proxy holding several Claude and Codex subscriptions) it shows, per provider, how many accounts are free, which account frees up first, and what is left in each window (session, weekly, per model) as a meter. Tap a provider to list its accounts with each window's use and time to reset: free ones first, then blocked ones by when they come back. Tap an account that has a reset credit, then tap again, to spend it. Below that: spend and tokens for today and the last 7 days, and the most expensive models. Accounts reported by several machines are counted once.
-- **Scheduled tasks**: your T3 scheduled tasks and when each runs next; tap twice to run one now, hold to pause or resume it (or use the menu).
+- **Scheduled tasks**: your T3 scheduled tasks and when each runs next; tap twice to run one now; pause or resume it from the menu.
 - **Your own pages**: a page is a thread whose latest reply is the page. Say what you want ("my open PRs and CI") with **New page by voice** in the menu, or on the phone, and a thread builds it and keeps it current: on a timer, when something happens (a webhook it sets up), or only when you ask (**Update this page** in the menu). Hold to talk on the page to change it. If the reply includes a small inline `<svg>` (light strokes on a transparent background), the glasses draw it as a picture beside the text.
-- **Alerts**: a short message replaces the top row for a few seconds when a thread needs you, finishes or fails, when a page of yours is rewritten, or when a usage pool passes the percentage you set. Tap it to open the thread (or the Usage page). A header note appears once today's spend reaches your daily budget. All of it is optional.
-- **Answer from the dashboard**: the dashboard's "needs you" lines say what each thread is waiting on. Tap an approval twice to allow it, hold to deny. A question opens its thread.
+- **Alerts**: a short message replaces the top row for a few seconds when a thread needs you, finishes or fails, when a page of yours is rewritten, or when a usage pool passes the percentage you set. While it shows, the menu (tap, then hold) has an item to open the thread (or the Usage page). A header note appears once today's spend reaches your daily budget. All of it is optional.
+- **Answer from the dashboard**: the dashboard's "needs you" lines say what each thread is waiting on. Tap an approval twice to allow it, or pick Allow or Deny in the menu. A question opens its thread.
 - **Quick replies**: in a thread, tap then hold opens the menu with canned replies ("Continue", "Ship it", …) that you set on the phone; one pick sends it.
 
 - **List**: your pinned threads (not settled or snoozed), ten at a time, loading the next ten as you reach the end, each with a status mark (threads waiting on you first, then ones with a new reply), and a right-hand column: `▶ 3:12` running with its timer, `★` waiting for you, `●` new reply, `○` done, `■` failed. `+ New thread` is always first.
@@ -31,15 +31,15 @@ The glasses have pages. Tap, then hold, to open the menu and switch; double tap 
 - **Scrolling** follows new output. Swipe up to read back; it stops following and shows `▼ 3 new · tap for latest`. Tap, or swipe back to the bottom, to resume.
 - **Questions and approvals**: when an agent asks something, the live line says `★ a question for you · tap to answer`. Tap to answer one question at a time: swipe to an option, tap to pick (or tick, for multi-select), or hold to say your answer. Approvals (run a command, change files) work the same way with the agent's own options.
 - **Messages from other agents** show as a single line: `▷ sending thread: message`.
-- **Voice**: hold the touchpad, speak, release to send. The message steers the running turn if there is one. Empty, too-short or silent recordings are never sent. After you release there are three seconds to change your mind: the bottom line counts down, and a double tap cancels the send. Tap, then hold, opens the glasses menu: **Record hands-free** keeps recording after you let go (tap sends, double tap pauses). A double tap mid-recording (for example to dismiss a notification) pauses it: hold to continue, tap to send, swipe to discard.
+- **Voice**: hold the touchpad, speak, release to send. The message steers the running turn if there is one. Empty, too-short or silent recordings are never sent. After you release there is a short wait (3 seconds by default, set on the phone, or none): the bottom line counts down, a swipe sends straight away, and **Cancel voice send** in the menu cancels it. Tap, then hold, opens the glasses menu: **Record hands-free** keeps recording after you let go (tap sends, double tap pauses). A double tap mid-recording (for example to dismiss a notification) pauses it: hold to continue, tap to send, swipe to discard.
 
-| Gesture | List | Thread | Usage | Your pages |
-|---|---|---|---|---|
-| Swipe | move | scroll history | pick a limit | scroll |
-| Tap | open | answer a question, or jump to latest | twice: use a reset credit | |
-| Hold, release | jump to top | record, send | | record a change, send |
-| Tap, then hold | menu: pages, new page | menu: hands-free, cancel send | menu: pages, refresh | menu: pages, hands-free |
-| Double tap | first page, then exit | back | first page | first page |
+| Gesture | List | Thread | Dashboard | Usage | Tasks | Your pages |
+|---|---|---|---|---|---|---|
+| Swipe | move | scroll history | pick a "needs you" line | pick a provider or account | pick a task | scroll |
+| Tap | open | answer a question, or jump to latest | twice: allow; a question opens | open a provider; twice on an account: use a reset credit | twice: run now | |
+| Hold, release | jump to top | record, send | | | | record a change, send |
+| Tap, then hold (menu) | pages, new page | hands-free, cancel send, quick replies | allow, deny, pages | pages, refresh, back | pause or resume, pages | update now, hands-free, pages |
+| Double tap | first page, then exit | back | first page | back to overview, then first page | first page | first page |
 
 ## On the phone
 

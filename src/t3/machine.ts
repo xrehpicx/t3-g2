@@ -159,7 +159,8 @@ export class Machine {
       let w = this.watched.get(t.id)
       if (!w) this.watched.set(t.id, w = { live: null, fetchedFor: '', stream: null })
       const entry = w
-      if (wants.activity && isBusy(t.status)) {
+      // Working or waiting on you: follow it live, so the step and the open request stay current.
+      if (wants.activity && (isBusy(t.status) || t.needsInput)) {
         entry.stream ??= this.openThread(t.id, live => { entry.live = live; this.onChange() })
       } else {
         entry.stream?.close()
