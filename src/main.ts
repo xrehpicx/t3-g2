@@ -47,6 +47,8 @@ if (hash.has('showcase') || (hash.has('demo') && !fleet.demoActive)) {
 }
 
 // #page=<page id> opens the glasses on that page (for screenshots): pinned, chats, dashboard, usage, or thread:<machine>:<thread>.
+// #permodel=off hides per-model limits (like Fable), for screenshots.
+if (hash.get('permodel') === 'off') await fleet.updateSettings({ perModelLimits: false })
 const startPage = hash.get('page')
 if (startPage && fleet.state.settings.pages.includes(startPage as never)) await fleet.updateSettings({ startPage: startPage as never })
 

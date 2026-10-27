@@ -11,7 +11,7 @@ import type { Fleet, FleetState } from '../fleet'
 import { currentStep, emptyLive, type PendingRequest, type ThreadLive } from '../t3/activity'
 import { isThreadPage, pagePrompt, PAGES, threadPageId, voiceText, type Page, type PageUpdates, type ThreadPage } from '../settings'
 import { isMissing, RESET_TEXT, type Insights } from '../t3/insights'
-import { families, limitWarnings, type LimitAccount } from '../t3/limits'
+import { families, limitWarnings, visibleLimits, type LimitAccount } from '../t3/limits'
 import { VOICE_ANSWER } from '../t3/send'
 import { SCRATCH } from '../t3/launch'
 import type { Machine, OpenThread } from '../t3/machine'
@@ -502,10 +502,13 @@ export class GlassesController {
   }
 
   private pageMachines(): PageMachine[] {
-    return this.fleet.state.machines.map(m => ({
-      id: m.id, label: m.label, online: m.link === 'live',
-      insights: this.fleet.machine(m.id)?.insights ?? { limits: null, usage: null, host: null, scheduled: null },
-    }))
+    const showPerModel = this.fleet.state.settings.perModelLimits
+    return this.fleet.state.machines.map(m => {
+      const insights = this.fleet.machine(m.id)?.insights ?? { limits: null, usage: null, host: null, scheduled: null }
+      // Limits for a single model are left out everywhere (pools, free counts, warnings) when switched off.
+      const limits = insights.limits && !isMissing(insights.limits) ? visibleLimits(insights.limits, showPerModel) : insights.limits
+      return { id: m.id, label: m.label, online: m.link === 'live', insights: { ...insights, limits } }
+    })
   }
 
   /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  accountOrder, dedupeAccounts, families, freeAt, isFree, limitWarnings, mergeAccounts, providerAccounts, shortNames, sourceAccounts,
+  accountOrder, dedupeAccounts, isPerModelWindow, visibleLimits, families, freeAt, isFree, limitWarnings, mergeAccounts, providerAccounts, shortNames, sourceAccounts,
   spanText, windowTag, type LimitAccount, type LimitWindow, type RawSource,
 } from './limits'
 
@@ -97,6 +97,23 @@ describe('pooling accounts', () => {
     const [f] = families([account('a', [win('Weekly', 10)]), account('none', [], { unavailable: 'unsupported' })])
     expect(f).toMatchObject({ counted: 1, free: 1 })
     expect(f.accounts).toHaveLength(2)
+  })
+})
+
+describe('per-model limits', () => {
+  const a = account('a', [win('Session', 10, 60), win('Weekly', 40, 900), win('Weekly · Fable', 100, 900)])
+  it('can be left out, and then no longer block the account or count in the pool', () => {
+    expect(isFree(a)).toBe(false)
+    const [shown] = visibleLimits([a], false)
+    expect(shown.windows.map(w => w.label)).toEqual(['Session', 'Weekly'])
+    expect(isFree(shown)).toBe(true)
+    expect(families(visibleLimits([a], false))[0].windows.map(w => w.label)).toEqual(['Session', 'Weekly'])
+    expect(limitWarnings(visibleLimits([a], false), 90, NOW)).toEqual([])
+    expect(limitWarnings([a], 90, NOW)).toHaveLength(1)
+  })
+  it('are all shown by default, untouched', () => {
+    expect(visibleLimits([a], true)).toEqual([a])
+    expect(isPerModelWindow(win('Weekly', 0))).toBe(false)
   })
 })
 

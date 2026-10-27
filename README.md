@@ -47,7 +47,7 @@ The app's page in the Even Realities app holds everything the glasses don't, in 
 
 | Threads | Pages | Display | Alerts | Voice | Machines |
 |---|---|---|---|---|---|
-| Pinned and other chats; tap one to open it on the glasses | Turn pages on or off, pick the page to open on, make pages from a description, set how each updates | Density, the clock, what the list shows beside each title | What to be alerted about, the limit warning level, the daily budget | Time to cancel a voice message, quick replies, voice instructions, defaults for new threads | Paired machines, connection test, pairing |
+| Pinned and other chats; tap one to open it on the glasses | Turn pages on or off, pick the page to open on, make pages from a description, set how each updates | Density, the clock, what the list shows beside each title, and whether per-model limits (like Fable) show on Usage | What to be alerted about, the limit warning level, the daily budget | Time to cancel a voice message, quick replies, voice instructions, defaults for new threads | Paired machines, connection test, pairing |
 
 | Pages | Alerts | Voice |
 |---|---|---|

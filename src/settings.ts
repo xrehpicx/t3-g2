@@ -31,6 +31,8 @@ export interface NewThreadSettings {
   quickReplies: string[]
   /** Approve or deny from the dashboard's "needs you" lines. */
   dashboardActions: boolean
+  /** Show limits that belong to one model (like "Weekly · Fable") on the Usage page, dashboard and in warnings. */
+  perModelLimits: boolean
 }
 
 /** Short alerts across the glasses header. Each is optional. */
@@ -187,6 +189,7 @@ export const DEFAULT_SETTINGS: NewThreadSettings = {
   dailyBudget: 0,
   quickReplies: DEFAULT_QUICK_REPLIES,
   dashboardActions: true,
+  perModelLimits: true,
 }
 
 const KEY = 't3g2.settings'
@@ -213,6 +216,7 @@ export function normalizeSettings(raw: unknown): NewThreadSettings {
     dailyBudget: BUDGETS.includes(o.dailyBudget as number) ? (o.dailyBudget as number) : 0,
     quickReplies: normalizeQuickReplies(o.quickReplies),
     dashboardActions: typeof o.dashboardActions === 'boolean' ? o.dashboardActions : true,
+    perModelLimits: typeof o.perModelLimits === 'boolean' ? o.perModelLimits : true,
   }
 }
 

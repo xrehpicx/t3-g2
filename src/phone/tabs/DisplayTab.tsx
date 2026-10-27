@@ -19,6 +19,9 @@ export function DisplayTab({ fleet, state }: { fleet: Fleet; state: FleetState }
           <Select value={s.clock} options={CLOCKS} onValueChange={clock => void fleet.updateSettings({ clock: clock as ClockFormat })} />
         </Row>
       </Section>
+      <Section label="Usage page" note="Some accounts report a separate limit for one model, such as “Weekly · Fable”. Hiding them also leaves them out of the free-account counts, the dashboard and limit warnings.">
+        <ToggleRow label="Show per-model limits" checked={s.perModelLimits} onChange={perModelLimits => void fleet.updateSettings({ perModelLimits })} />
+      </Section>
       <Section label="Beside each thread in the list" note="Shown after the title, in this order, when there is room. Following what a thread is doing keeps a live connection open for the threads on screen.">
         {LIST_FIELDS.map(f => (
           <ToggleRow key={f.value} label={f.label} hint={f.hint} checked={s.listFields.includes(f.value)} onChange={on => void fleet.updateSettings({ listFields: toggleField(s.listFields, f.value, on) })} />

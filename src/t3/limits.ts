@@ -146,6 +146,15 @@ export function dedupeAccounts(lists: LimitAccount[][]): LimitAccount[] {
 
 // --- reading one account ------------------------------------------------------------------------
 
+/** A window for one model ("Weekly · Fable") rather than the account as a whole. */
+export const isPerModelWindow = (w: LimitWindow) => w.label.includes('·')
+
+/** The accounts as they are to be shown: without per-model windows when those are switched off. */
+export function visibleLimits(accounts: LimitAccount[], showPerModel: boolean): LimitAccount[] {
+  if (showPerModel) return accounts
+  return accounts.map(a => (a.windows.some(isPerModelWindow) ? { ...a, windows: a.windows.filter(w => !isPerModelWindow(w)) } : a))
+}
+
 /** A window with nothing left. */
 export const isFull = (w: LimitWindow) => w.usedPercent >= 100
 

@@ -57,6 +57,11 @@ describe('settings', () => {
     expect(s.pages).toEqual(['pinned', 'thread:m:t'])
     expect(s.startPage).toBe('thread:m:t')
   })
+  it('shows per-model limits unless switched off', () => {
+    expect(normalizeSettings({}).perModelLimits).toBe(true)
+    expect(normalizeSettings({ perModelLimits: false }).perModelLimits).toBe(false)
+    expect(normalizeSettings({ perModelLimits: 'no' }).perModelLimits).toBe(true)
+  })
   it('defaults to comfortable density and keeps compact', () => {
     expect(normalizeSettings({}).density).toBe('comfortable')
     expect(normalizeSettings({ density: 'compact' }).density).toBe('compact')
