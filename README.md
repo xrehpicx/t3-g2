@@ -7,8 +7,10 @@ It runs as an Even Hub app on your phone and talks straight to your own T3 serve
 | Pinned threads | A thread, live | Answering a question |
 |---|---|---|
 | ![Pinned threads](assets/screenshots/list.png) | ![A running thread](assets/screenshots/thread.png) | ![A question](assets/screenshots/question.png) |
-| **Dashboard** | **Usage and limits** | **A page made by a thread** |
-| ![Dashboard](assets/screenshots/dashboard.png) | ![Usage](assets/screenshots/usage.png) | ![A thread page](assets/screenshots/page.png) |
+| **Dashboard** | **Usage across accounts** | **Each account** |
+| ![Dashboard](assets/screenshots/dashboard.png) | ![Usage](assets/screenshots/usage.png) | ![Accounts](assets/screenshots/usage-accounts.png) |
+| **A page made by a thread, with a chart** | **Scheduled tasks** | |
+| ![A thread page](assets/screenshots/page.png) | ![Tasks](assets/screenshots/tasks.png) | |
 
 ## On the glasses
 
@@ -17,8 +19,12 @@ The glasses have pages. Tap, then hold, to open the menu and switch; double tap 
 - **Pinned**: your pinned threads (see List below).
 - **Chats**: every other open thread, newest first.
 - **Dashboard**: what needs you (tap to open it), what is running and what each is doing, each machine's CPU and memory, today's spend, the busiest usage limit and the next scheduled run.
-- **Usage**: each provider's usage limits as meters with time to reset, spend and tokens for today and the last 7 days, and the most expensive models. Swipe to a limit and tap twice to spend a reset credit on it.
-- **Your own pages**: a page is a thread whose latest reply is the page. Say what you want ("my open PRs and CI, every 15 minutes") with **New page by voice** in the menu, or on the phone, and a thread builds it, schedules its own refreshes, and keeps it current. Hold to talk on the page to change it.
+- **Usage**: every provider's limits, pooled across all its accounts. With a usage-limit source (a proxy holding several Claude and Codex subscriptions) it shows, per provider, how many accounts are free, which account frees up first, and what is left in each window (session, weekly, per model) as a meter. Tap a provider to list its accounts with each window's use and time to reset: free ones first, then blocked ones by when they come back. Tap an account that has a reset credit, then tap again, to spend it. Below that: spend and tokens for today and the last 7 days, and the most expensive models. Accounts reported by several machines are counted once.
+- **Scheduled tasks**: your T3 scheduled tasks and when each runs next; tap twice to run one now, hold to pause or resume it (or use the menu).
+- **Your own pages**: a page is a thread whose latest reply is the page. Say what you want ("my open PRs and CI") with **New page by voice** in the menu, or on the phone, and a thread builds it and keeps it current: on a timer, when something happens (a webhook it sets up), or only when you ask (**Update this page** in the menu). Hold to talk on the page to change it. If the reply includes a small inline `<svg>` (light strokes on a transparent background), the glasses draw it as a picture beside the text.
+- **Alerts**: a short message replaces the top row for a few seconds when a thread needs you, finishes or fails, when a page of yours is rewritten, or when a usage pool passes the percentage you set. Tap it to open the thread (or the Usage page). A header note appears once today's spend reaches your daily budget. All of it is optional.
+- **Answer from the dashboard**: the dashboard's "needs you" lines say what each thread is waiting on. Tap an approval twice to allow it, hold to deny. A question opens its thread.
+- **Quick replies**: in a thread, tap then hold opens the menu with canned replies ("Continue", "Ship it", …) that you set on the phone; one pick sends it.
 
 - **List**: your pinned threads (not settled or snoozed), ten at a time, loading the next ten as you reach the end, each with a status mark (threads waiting on you first, then ones with a new reply), and a right-hand column: `▶ 3:12` running with its timer, `★` waiting for you, `●` new reply, `○` done, `■` failed. `+ New thread` is always first.
 - **Thread**: the latest messages, newest at the bottom, with a live line under them showing what the agent is doing (`▅ $ pnpm test`, `▃ edit auth.ts`, `▇ thinking`).
@@ -37,7 +43,15 @@ The glasses have pages. Tap, then hold, to open the menu and switch; double tap 
 
 ## On the phone
 
-The app's page in the Even Realities app holds everything the glasses don't. Tap a pinned thread there to open it on your glasses. Glasses display settings (density, the clock in the header, and what the thread list shows beside each title: what a running thread is doing, its latest reply, project, machine) live there too. It also has your paired machines, settings for new threads (machine, project, model, permissions), and the instructions sent with each voice message. It also lists your pinned threads and can test each machine's connection.
+The app's page in the Even Realities app holds everything the glasses don't, in six tabs so each setting is easy to find:
+
+| Threads | Pages | Display | Alerts | Voice | Machines |
+|---|---|---|---|---|---|
+| Pinned and other chats; tap one to open it on the glasses | Turn pages on or off, pick the page to open on, make pages from a description, set how each updates | Density, the clock, what the list shows beside each title | What to be alerted about, the limit warning level, the daily budget | Time to cancel a voice message, quick replies, voice instructions, defaults for new threads | Paired machines, connection test, pairing |
+
+| Pages | Alerts | Voice |
+|---|---|---|
+| ![Pages tab](assets/screenshots/phone-pages.png) | ![Alerts tab](assets/screenshots/phone-alerts.png) | ![Voice tab](assets/screenshots/phone-voice.png) |
 
 **Try it without a server:** tap on the glasses' first screen, or "Try the demo" on the phone.
 
@@ -52,7 +66,7 @@ The app's page in the Even Realities app holds everything the glasses don't. Tap
    ```sh
    t3 auth pairing create --scope orchestration:read --scope orchestration:operate --scope diagnostics:read --scope providers:manage
    ```
-   Leave out `orchestration:operate` for a watch-only pairing. `diagnostics:read` adds spend and tokens to the Usage page; `providers:manage` lets you spend reset credits from the glasses. Both are optional.
+   Leave out `orchestration:operate` for a watch-only pairing (no sending, answering, task control). `diagnostics:read` adds spend and tokens to the Usage page; `providers:manage` lets you spend reset credits from the glasses. Both are optional.
 3. Open T3 Code G2 in the Even Realities app, enter the address and code. Pair more machines the same way; their pinned threads are merged.
 
 Voice messages are transcribed by the agent on the machine running the thread, so that machine needs speech-to-text, for example [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (`brew install whisper-cpp`) with a model in `~/.cache/whisper-models`. The instructions sent with each voice message can be edited on the phone; a note on how many lines of reply fit the screen (fewer when comfortable, more when compact) is added automatically.
@@ -94,7 +108,7 @@ tools/calibrate.html   measures the firmware font's glyph widths in the simulato
 
 - `POST /oauth/token` exchanges the one-time pairing code for a bearer session.
 - `orchestration.subscribeShell` (thread list) and `orchestration.subscribeThread` (messages and activity) stream over WebSocket; it falls back to polling if sockets are blocked.
-- Dashboard and usage: `server.refreshProviders` (usage limits and reset credits), `server.getUsageSummary` (spend and tokens), `server.getHostResources`, `scheduledTasks.list`, and `provider.consumeResetCredit` to reset a limit.
+- Dashboard, usage and tasks: `server.refreshProviders` (a machine's own provider limits), the `subscribeServerConfig` stream with `usageLimitSources` (accounts behind a limit source such as a proxy), `server.getUsageSummary` (spend and tokens), `server.getHostResources`, `scheduledTasks.list` / `runNow` / `setEnabled`, and `provider.consumeResetCredit` to reset a limit (for a source account, with the account and credit ids).
 - Voice: `attachments.createUploadUrl`, upload the WAV, then `message.dispatch` with `deliveryIntent: steer`, or `orchestration.launchThread` for new threads.
 
 ## Privacy

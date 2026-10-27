@@ -9,8 +9,9 @@ import { Recorder } from '../audio/recorder'
 import { AUDIO_PROBLEM_TEXT, audioProblem, durationMs, peak, pcm16ToWav } from '../audio/wav'
 import type { Fleet, FleetState } from '../fleet'
 import { currentStep, emptyLive, type PendingRequest, type ThreadLive } from '../t3/activity'
-import { isThreadPage, PAGE_PROMPT, PAGES, threadPageId, voiceText, type Page, type ThreadPage } from '../settings'
-import { isMissing, RESET_TEXT } from '../t3/insights'
+import { isThreadPage, pagePrompt, PAGES, threadPageId, voiceText, type Page, type PageUpdates, type ThreadPage } from '../settings'
+import { isMissing, RESET_TEXT, type Insights } from '../t3/insights'
+import { families, limitWarnings, type LimitAccount } from '../t3/limits'
 import { VOICE_ANSWER } from '../t3/send'
 import { SCRATCH } from '../t3/launch'
 import type { Machine, OpenThread } from '../t3/machine'
@@ -23,7 +24,9 @@ import {
   attentionFirst, buildRows, CLOCK_W, formatClock, listDetail, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, SEP_KEY, type ListRow,
   approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
 } from './screens'
-import { dashboardLines, pageDots, pageWindow, usageLines, type PageLine, type PageMachine } from './pages'
+import { freshWarnings, overBudget, snapshotOf, summarize, threadAlerts, type Alert, type SnapMap } from './alerts'
+import { accountKey, approvalDecisions, askKey, dashboardLines, money, pageDots, pageWindow, taskKey, taskLines, todaySpend, usageAccounts, usageLines, type PageLine, type PageMachine } from './pages'
+import { extractSvg, hashText, renderSvgPng, type RenderedImage } from './svgImage'
 import { contentChanged, initialScroll, jumpToBottom, scrollNewer, scrollOlder, visible, type ScrollState } from './scroll'
 
 type Sdk = typeof import('@evenrealities/even_hub_sdk')
@@ -41,6 +44,14 @@ const MENU_SEND_NOW = 4
 const MENU_DISCARD = 5
 const MENU_REFRESH = 6
 const MENU_NEW_PAGE = 7
+const MENU_BACK = 8
+const MENU_TASK_RUN = 9
+const MENU_TASK_PAUSE = 10
+const MENU_PAGE_REFRESH = 11
+/** Menu ids for quick replies: MENU_QUICK + the reply's index. */
+const MENU_QUICK = 40
+/** How long an alert stays in the header. */
+const ALERT_MS = 8_000
 /** Menu ids for switching page: MENU_PAGE + the page's index in PAGES. */
 const MENU_PAGE = 20
 const ROWS_TOTAL = 10
@@ -51,6 +62,16 @@ const PAGE_ROWS = ROWS_TOTAL - 2
 const C = {
   head: [1, 'head'], side: [2, 'side'], status: [3, 'status'], body: [4, 'body'], bar: [5, 'bar'], selected: [6, 'selected'], input: [7, 'input'], prompt: [8, 'prompt'], thumb: [9, 'thumb'], clock: [10, 'clock'],
 } as const
+
+/** The glasses allow 8 text containers per page (one is the invisible input layer). */
+const MAX_TEXT_BOXES = 7
+/** Dropped first, if a page would have too many: the scrollbar, then the clock, then the dim layer. */
+const SHED_ORDER: Slot[] = ['thumb', 'bar', 'clock', 'prompt']
+const IMAGE_ID = 11
+const IMAGE_NAME = 'image'
+
+/** A picture on a page: a PNG for the glasses' image container. */
+interface ImageSlot { key: string; x: number; y: number; w: number; h: number; png: Uint8Array }
 type Slot = keyof typeof C
 
 /** Text brightness, 0 (dimmest) to 4. */
@@ -100,7 +121,7 @@ export class GlassesController {
   private rendering: Promise<void> = Promise.resolve()
   /** A hands-free recording: started from the menu, so it keeps going after the touchpad is released. */
   private latched = false
-  private latest: { layout: string; boxes: Box[]; menu?: Array<[number, string]> } | null = null
+  private latest: { layout: string; boxes: Box[]; menu?: Array<[number, string]>; image?: ImageSlot } | null = null
   private cursorKey = 'new'
   /** The top-level page the list screen shows. */
   private page: Page | null = null
@@ -108,12 +129,23 @@ export class GlassesController {
   /** Index into the usage page's choices (its limits). */
   private pageCursor = 0
   /** A limit whose reset credit is waiting for a second tap to confirm. */
-  private confirmReset: string | null = null
+  /** Something waiting for a second tap to confirm: a reset credit, an approval, a task run. */
+  private armed: { kind: 'reset' | 'allow' | 'task'; key: string } | null = null
+  /** The provider whose accounts the Usage page is listing; null is the overview. */
+  private usageDriver: string | null = null
+  private pageImage: { key: string; png: RenderedImage | null } | null = null
+  /** The last look at the threads, to notice what changed. */
+  private lastSnap: SnapMap | null = null
+  private limitActive = new Set<string>()
+  private alert: (Alert & { until: number }) | null = null
+  private alertTimer: ReturnType<typeof setTimeout> | undefined
   /** The live thread behind a thread page, while that page is showing. */
   private pageStream: { id: string; handle: OpenThread } | null = null
   private pageLive: ThreadLive = emptyLive()
   /** What the compose screen starts: a thread, or a thread that becomes a page. */
   private composeKind: 'thread' | 'page' = 'thread'
+  /** How a page started by voice keeps itself current. */
+  private composeUpdates: PageUpdates = 'timer'
   /** How many threads the list has loaded so far; grows by a page as you reach the end. */
   private loaded = PAGE_SIZE
   private listTop = 0
@@ -162,6 +194,7 @@ export class GlassesController {
     this.pinnedList = state.threads
     this.otherList = state.others
     this.markFirstSeen()
+    this.checkAlerts(state)
     if (this.screen === 'thread' && this.current) {
       const fresh = this.machineOf(this.current)?.thread(this.current.id)
       if (fresh) this.current = fresh
@@ -210,15 +243,26 @@ export class GlassesController {
    * Draws a screen. The first draw of a layout rebuilds the page; later draws with the same layout only
    * push the containers whose text or brightness changed, which is flicker-free and cheap over BLE.
    */
-  private draw(nextLayout: string, nextBoxes: Box[], menu?: Array<[number, string]>): Promise<void> {
+  private draw(nextLayout: string, nextBoxes: Box[], menu?: Array<[number, string]>, image?: ImageSlot): Promise<void> {
     // Only the newest frame matters: a frame queued behind a slow BLE update is dropped rather than
     // painted late over a newer screen.
-    this.latest = { layout: nextLayout, boxes: nextBoxes, menu }
+    // The menu and picture are only applied when the page is rebuilt, so a change to either is a new layout.
+    const signature = `${nextLayout}|${menu ? menu.map(([id, name]) => `${id}=${name}`).join(',') : ''}|${image?.key ?? ''}`
+    // Past the container limit the firmware rejects the whole page and keeps showing the old one, so
+    // shed the least important layers instead.
+    const boxes = [...nextBoxes]
+    for (const slot of SHED_ORDER) {
+      if (boxes.length <= MAX_TEXT_BOXES) break
+      const at = boxes.findIndex(b => b.slot === slot)
+      if (at >= 0) boxes.splice(at, 1)
+    }
+    if (boxes.length > MAX_TEXT_BOXES) console.error('[t3-g2] too many containers on', nextLayout, boxes.length)
+    this.latest = { layout: signature, boxes, menu, image }
     this.rendering = this.rendering.catch(() => {}).then(async () => {
       const frame = this.latest
       if (!frame) return
       this.latest = null
-      const { layout, boxes, menu } = frame
+      const { layout, boxes, menu, image } = frame
       if (layout === this.layout && this.created) {
         for (const box of boxes) {
           const text = box.text || ' '
@@ -256,15 +300,28 @@ export class GlassesController {
       const menuObject = menu
         ? new this.sdk.MenuContainerProperty({ menuItems: menu.map(([itemID, itemName]) => new this.sdk.MenuItemProperty({ itemID, itemName })) })
         : undefined
-      const page = { containerTotalNum: textObject.length, textObject, ...(menuObject ? { menuObject } : {}) }
+      const imageObject = image ? [new this.sdk.ImageContainerProperty({
+        xPosition: image.x, yPosition: image.y, width: image.w, height: image.h, containerID: IMAGE_ID, containerName: IMAGE_NAME,
+      })] : undefined
+      const page = {
+        containerTotalNum: textObject.length + (imageObject?.length ?? 0), textObject,
+        ...(imageObject ? { imageObject } : {}), ...(menuObject ? { menuObject } : {}),
+      }
+      let shown = true
       if (!this.created) {
         const result = await this.bridge.createStartUpPageContainer(new this.sdk.CreateStartUpPageContainer(page))
         // A reloaded WebView already owns a page; replace it instead.
         this.created = result === 0 || await this.bridge.rebuildPageContainer(new this.sdk.RebuildPageContainer(page))
+        shown = this.created
         if (!this.created) console.error('[t3-g2] could not create the glasses page', result)
       } else if (!(await this.bridge.rebuildPageContainer(new this.sdk.RebuildPageContainer(page)))) {
         console.error('[t3-g2] page rebuild rejected', layout)
+        shown = false
       }
+      // The old page is still up if the glasses refused this one. Forget that this layout is showing, so
+      // the next frame rebuilds instead of writing new text into the wrong page.
+      if (!shown) { this.layout = ''; return }
+      if (image) await this.bridge.updateImageRawData(new this.sdk.ImageRawDataUpdate({ containerID: IMAGE_ID, containerName: IMAGE_NAME, imageData: image.png })).catch(() => undefined)
     })
     return this.rendering
   }
@@ -325,6 +382,7 @@ export class GlassesController {
   private renderList() {
     if (this.page === 'dashboard') return this.renderDashboard()
     if (this.page === 'usage') return this.renderUsage()
+    if (this.page === 'tasks') return this.renderTasks()
     if (this.page && isThreadPage(this.page)) return this.renderThreadPage(this.page)
     this.closePageStream()
     this.watchVisible()
@@ -359,21 +417,27 @@ export class GlassesController {
     return PAGES.find(p => p.value === page)?.label ?? page
   }
 
-  /** The header row every page shares: the page's own summary on the left, then which page this is, then the time. */
+  /** The header row every page shares: an alert or the page's own summary, then the page dots and the time. */
   private headerBoxes(left: string): { key: string; boxes: Box[] } {
+    const alert = this.activeAlert()
     const offline = this.fleet.state.machines.filter(m => m.link !== 'live')
-    const warn = offline.length ? `   ${MARK.done} ${offline.length === 1 ? offline[0].label : offline.length} offline` : ''
-    const right = this.pages.length > 1 ? pageDots(this.pages, this.page ?? '') : ''
-    const time = this.clockBox()
-    const edge = FULL_W - time.w
-    // Just wide enough for the dots, so the left side keeps the rest of the row.
-    const rightW = right ? textWidth(right) + SAFETY_PX + 16 : 0
+    const spent = todaySpend(this.pageMachines())
+    const budget = this.fleet.state.settings.dailyBudget
+    const warnings = [
+      overBudget(spent, budget) ? `$ ${money(spent ?? 0)} of $${budget}` : '',
+      offline.length ? `${MARK.done} ${offline.length === 1 ? offline[0].label : `${offline.length} machines`} offline` : '',
+    ].filter(Boolean)
+    const dots = this.pages.length > 1 ? pageDots(this.pages, this.page ?? '') : ''
+    const time = formatClock(new Date(), this.fleet.state.settings.clock)
+    const right = [dots, time].filter(Boolean).join('   ')
+    // A fixed width, so the page is not rebuilt as the minutes change the clock's text.
+    const rightW = (dots ? textWidth(dots) + SAFETY_PX + 16 : 0) + (time ? CLOCK_W : 0)
+    const text = alert ? alert.text : [left, ...warnings].filter(Boolean).join('   ')
     return {
-      key: `${time.w}:${rightW}`,
+      key: String(rightW),
       boxes: [
-        { slot: 'head', x: 0, y: rowY(0), w: edge - rightW, h: rowsH(1), text: fitWidth(left + warn, edge - rightW - 8), brightness: BRIGHT },
-        ...(right ? [{ slot: 'side' as const, x: edge - rightW, y: rowY(0), w: rightW, h: rowsH(1), text: alignRight(right, rightW), brightness: DIM }] : []),
-        ...time.boxes,
+        { slot: 'head', x: 0, y: rowY(0), w: FULL_W - rightW, h: rowsH(1), text: fitWidth(text, FULL_W - rightW - 8), brightness: BRIGHT },
+        ...(right ? [{ slot: 'side' as const, x: FULL_W - rightW, y: rowY(0), w: rightW, h: rowsH(1), text: alignRight(right, rightW), brightness: DIM }] : []),
       ],
     }
   }
@@ -381,7 +445,7 @@ export class GlassesController {
   /** Menu entries that switch page; the current page is marked. */
   private pageMenu(): Array<[number, string]> {
     if (this.pages.length < 2) return []
-    return this.pages.slice(0, 7).map((page, i) => [MENU_PAGE + i, `${page === this.page ? '● ' : ''}${this.pageLabel(page)}`])
+    return this.pages.slice(0, 6).map((page, i) => [MENU_PAGE + i, `${page === this.page ? '● ' : ''}${this.pageLabel(page)}`])
   }
 
   private switchPage(page: Page) {
@@ -392,7 +456,8 @@ export class GlassesController {
     this.loaded = PAGE_SIZE
     this.pageTop = 0
     this.pageCursor = 0
-    this.confirmReset = null
+    this.armed = null
+    this.usageDriver = null
     this.screen = 'list'
     this.clearNotice()
     this.refreshInsights()
@@ -406,94 +471,255 @@ export class GlassesController {
     }))
   }
 
-  /** Keeps the dashboard and usage numbers fresh while one of those pages is showing. */
+  /**
+   * Keeps the numbers behind the pages and alerts fresh. A page being looked at refreshes what it shows;
+   * otherwise only what an alert or the budget needs, and only if that is switched on.
+   */
   private refreshInsights() {
-    if (this.screen !== 'list' || (this.page !== 'dashboard' && this.page !== 'usage')) return
-    for (const m of this.fleet.state.machines) this.fleet.machine(m.id)?.refreshInsights()
+    if (this.fleet.state.phase !== 'ready') return
+    const { alerts, dailyBudget } = this.fleet.state.settings
+    const parts = new Set<keyof Insights>()
+    if (this.screen === 'list') {
+      if (this.page === 'dashboard') ['host', 'limits', 'usage', 'scheduled'].forEach(p => parts.add(p as keyof Insights))
+      else if (this.page === 'usage') { parts.add('limits'); parts.add('usage') }
+      else if (this.page === 'tasks') parts.add('scheduled')
+    }
+    if (alerts.limitPercent > 0) parts.add('limits')
+    if (dailyBudget > 0) parts.add('usage')
+    if (!parts.size) return
+    for (const m of this.fleet.state.machines) this.fleet.machine(m.id)?.refreshInsights(false, [...parts])
   }
 
   /** A page of lines (dashboard, usage, a thread page): dim and normal lines, an optional bright choice, a status row. */
-  private drawPage(kind: string, left: string, lines: PageLine[], selected: string | null, status: { text: string; brightness: number }, menu: Array<[number, string]>) {
+  private drawPage(kind: string, left: string, lines: PageLine[], selected: string | null, status: { text: string; brightness: number }, menu: Array<[number, string]>, image?: ImageSlot) {
     const cursorLine = selected ? lines.findIndex(l => l.select === selected) : -1
     this.pageTop = pageWindow(lines, this.pageTop, PAGE_ROWS, cursorLine)
     const shown = lines.slice(this.pageTop, this.pageTop + PAGE_ROWS)
     const bar = scrollbar(lines.length, this.pageTop, PAGE_ROWS)
-    const width = FULL_W - (bar.thumb ? BAR_W + 4 : 0)
+    const width = image ? image.x - 8 : FULL_W - (bar.thumb ? BAR_W + 4 : 0)
     const chosen = (l: PageLine) => selected !== null && l.select === selected
     const layer = (keep: (l: PageLine) => boolean) => shown.map(l => (keep(l) ? clipWidth(l.text, width - 6) : '')).join('\n')
     const head = this.headerBoxes(left)
-    return this.draw(`page:${kind}:${bar.thumb ? 'bar' : 'nobar'}:${head.key}`, [
+    // Containers are scarce (see MAX_TEXT_BOXES): the highlight layer is only there when something can be
+    // chosen, and the dim layer folds into the main one when a scrollbar needs the room.
+    const choosable = selected !== null
+    const foldDim = bar.thumb && choosable
+    const hasDim = !foldDim && lines.some(l => l.dim)
+    return this.draw(`page:${kind}:${bar.thumb ? 'bar' : 'nobar'}:${choosable ? 'sel' : 'view'}:${hasDim ? 'dim' : 'flat'}:${head.key}`, [
       ...head.boxes,
-      { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && !l.dim), brightness: MID },
-      { slot: 'prompt', x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && Boolean(l.dim)), brightness: 1 },
-      { slot: 'selected', x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(chosen), brightness: BRIGHT },
+      { slot: 'body', x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && (foldDim || !l.dim)), brightness: MID },
+      ...(hasDim ? [{ slot: 'prompt' as const, x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(l => !chosen(l) && Boolean(l.dim)), brightness: 1 }] : []),
+      ...(choosable ? [{ slot: 'selected' as const, x: 0, y: rowY(1), w: width, h: rowsH(PAGE_ROWS), text: layer(chosen), brightness: BRIGHT }] : []),
       ...(bar.thumb ? this.barBoxes(bar, rowY(1), rowsH(PAGE_ROWS)) : []),
       { slot: 'status', x: 0, y: rowY(1 + PAGE_ROWS), w: FULL_W, h: rowsH(1), text: fitWidth(status.text, FULL_W - 4), brightness: status.brightness },
-    ], menu)
+    ], menu, image)
   }
 
   private pageNotice(fallback: string) {
     return this.notice ? { text: this.notice, brightness: BRIGHT } : { text: fallback, brightness: DIM }
   }
 
-  private renderDashboard() {
-    this.closePageStream()
-    const all = [...this.pinnedList, ...this.otherList]
-    // Follow running threads so the dashboard can say what each is doing.
-    for (const m of this.fleet.state.machines) {
-      this.fleet.machine(m.id)?.watch(all.filter(t => t.machineId === m.id && isBusy(t.status)).slice(0, 3), { activity: true, reply: false })
-    }
-    const [summary, ...lines] = dashboardLines({
-      threads: all, unread: this.unread, now: Date.now(), machines: this.pageMachines(),
-      step: t => this.machineOf(t)?.glance(t.id)?.step ?? null,
-    })
-    const asking = all.find(t => t.needsInput || t.status === 'waiting')
-    const status = this.pageNotice(asking ? `tap: open ${asking.title}` : 'tap+hold: pages')
-    // The summary ("★ 2 need you ▶ 1 running") is the header; the page needs no title.
-    return this.drawPage('dashboard', summary.text, lines, null, status, [...this.pageMenu(), [MENU_REFRESH, 'Refresh']])
+  /** The lines of the page being shown, for working out what can be chosen. */
+  private pageLines(): PageLine[] {
+    if (this.page === 'dashboard') return dashboardLines(this.dashboardInput()).slice(1)
+    if (this.page === 'tasks') return taskLines(this.pageMachines(), Date.now())
+    return usageLines(this.pageMachines(), Date.now(), this.usageDriver)
   }
 
-  private usageChoices(lines: PageLine[]): string[] {
+  private choices(lines: PageLine[]): string[] {
     return [...new Set(lines.flatMap(l => (l.select ? [l.select] : [])))]
   }
+
+  /** The key of the highlighted choice, keeping the cursor inside the list. */
+  private chosenKey(lines: PageLine[]): string | null {
+    const keys = this.choices(lines)
+    this.pageCursor = Math.max(0, Math.min(this.pageCursor, keys.length - 1))
+    return keys[this.pageCursor] ?? null
+  }
+
+  // --- dashboard ----------------------------------------------------------------------------
+
+  private dashboardInput() {
+    const all = [...this.pinnedList, ...this.otherList]
+    return {
+      threads: all, unread: this.unread, now: Date.now(), machines: this.pageMachines(),
+      budget: this.fleet.state.settings.dailyBudget, actions: this.fleet.state.settings.dashboardActions,
+      step: (t: PinnedThread) => this.machineOf(t)?.glance(t.id)?.step ?? null,
+      request: (t: PinnedThread) => this.machineOf(t)?.glance(t.id)?.request ?? null,
+    }
+  }
+
+  private renderDashboard() {
+    this.closePageStream()
+    const input = this.dashboardInput()
+    // Follow the threads that are working or asking, so the dashboard can say what each is doing.
+    for (const m of this.fleet.state.machines) {
+      const busy = input.threads.filter(t => t.machineId === m.id && (isBusy(t.status) || t.needsInput))
+      this.fleet.machine(m.id)?.watch(busy.slice(0, 6), { activity: true, reply: false })
+    }
+    const [summary, ...lines] = dashboardLines(input)
+    const selected = this.chosenKey(lines)
+    const asking = selected ? input.threads.find(t => askKey(t) === selected) : undefined
+    const request = asking ? input.request(asking) : null
+    const status = this.armed?.kind === 'allow' && asking
+      ? { text: `tap again: allow · hold: deny · swipe: cancel`, brightness: BRIGHT }
+      : this.notice ? this.pageNotice('')
+      : asking ? this.pageNotice(request?.kind === 'approval' ? 'tap: allow (asks first) · hold: deny' : 'tap: open and answer')
+      : this.pageNotice('tap+hold: pages')
+    // The summary ("★ 2 need you ▶ 1 running") is the header; the page needs no title.
+    return this.drawPage('dashboard', summary.text, lines, selected, status, [...this.pageMenu(), [MENU_REFRESH, 'Refresh']])
+  }
+
+  /** The thread on the dashboard's highlighted line, with what it is waiting on. */
+  private askedThread() {
+    const input = this.dashboardInput()
+    const [, ...lines] = dashboardLines(input)
+    const key = this.chosenKey(lines)
+    const thread = key ? input.threads.find(t => askKey(t) === key) : undefined
+    return thread ? { thread, key: key!, request: input.request(thread), machine: this.machineOf(thread) } : null
+  }
+
+  /** First tap on an approval asks, second allows; a question opens its thread. */
+  private async tapDashboard() {
+    const asked = this.askedThread()
+    if (!asked) return
+    const { thread, key, request, machine } = asked
+    if (request?.kind !== 'approval') return void this.open(thread)
+    if (this.armed?.kind !== 'allow' || this.armed.key !== key) { this.armed = { kind: 'allow', key }; return void this.renderDashboard() }
+    this.armed = null
+    await this.answerApproval(thread, request, machine, 'allow')
+  }
+
+  /** Hold on an approval denies it, straight away: denying is always safe. */
+  private async holdDashboard() {
+    const asked = this.askedThread()
+    if (!asked || asked.request?.kind !== 'approval') return
+    this.armed = null
+    await this.answerApproval(asked.thread, asked.request, asked.machine, 'deny')
+  }
+
+  private async answerApproval(thread: PinnedThread, request: Extract<PendingRequest, { kind: 'approval' }>, machine: Machine | undefined, which: 'allow' | 'deny') {
+    if (!machine) return
+    const decisions = approvalDecisions(request)
+    try {
+      await machine.respond(thread.id, request.requestId, { decision: decisions[which] })
+      await this.showNotice(`${which === 'allow' ? '● allowed' : '■ denied'}: ${thread.title}`, 4000)
+    } catch (error) {
+      await this.showNotice(error, 6000)
+    }
+  }
+
+  // --- usage ----------------------------------------------------------------------------------
 
   private renderUsage() {
     this.closePageStream()
     const machines = this.pageMachines()
-    const lines = usageLines(machines, Date.now())
-    const choices = this.usageChoices(lines)
-    this.pageCursor = Math.max(0, Math.min(this.pageCursor, choices.length - 1))
-    const selected = choices[this.pageCursor] ?? null
-    const limit = selected ? this.limitFor(selected) : null
-    const status = this.confirmReset && limit
-      ? { text: `tap again to spend a reset credit on ${limit.provider.name} (${limit.provider.credits} left) · swipe: cancel`, brightness: BRIGHT }
-      : this.pageNotice(limit?.provider.credits ? 'tap: use a reset credit on this limit' : 'swipe: limits · tap+hold: pages')
-    return this.drawPage('usage', 'Usage', lines, selected, status, [...this.pageMenu(), [MENU_REFRESH, 'Refresh']])
+    const lines = usageLines(machines, Date.now(), this.usageDriver)
+    const selected = this.chosenKey(lines)
+    const account = selected?.startsWith('acct:') ? this.accountFor(selected) : null
+    const status = this.armed?.kind === 'reset' && account
+      ? { text: `tap again to spend a reset credit on ${account.name} (${account.credits} left) · swipe: cancel`, brightness: BRIGHT }
+      : this.notice ? this.pageNotice('')
+      : this.usageDriver ? this.pageNotice(account?.credits ? 'tap: use a reset credit · double tap: back' : 'swipe: accounts · double tap: back')
+      : this.pageNotice(selected ? 'tap: see each account · swipe: next provider' : 'tap+hold: pages')
+    const menu: Array<[number, string]> = [...this.pageMenu(), [MENU_REFRESH, 'Refresh'], ...(this.usageDriver ? [[MENU_BACK, 'Back to overview'] as [number, string]] : [])]
+    const title = this.usageDriver ? `${families(usageAccounts(machines)).find(f => f.driver === this.usageDriver)?.provider ?? 'Usage'} accounts` : 'Usage'
+    return this.drawPage(`usage:${this.usageDriver ?? ''}`, title, lines, selected, status, menu)
   }
 
-  private limitFor(key: string) {
-    const [machineId, instanceId] = [key.slice(0, key.lastIndexOf(':')), key.slice(key.lastIndexOf(':') + 1)]
-    const machine = this.fleet.machine(machineId)
-    const limits = machine?.insights.limits
-    const provider = limits && !isMissing(limits) ? limits.find(p => p.instanceId === instanceId) : undefined
-    return machine && provider ? { machine, provider } : null
+  private accountFor(key: string): LimitAccount | null {
+    return usageAccounts(this.pageMachines()).find(a => accountKey(a.key) === key) ?? null
   }
 
-  /** First tap asks, second tap spends the credit. */
+  /** On the overview a tap opens a provider's accounts; on an account it asks, then spends a reset credit. */
   private async tapUsage() {
-    const choices = this.usageChoices(usageLines(this.pageMachines(), Date.now()))
-    const key = choices[this.pageCursor]
-    const limit = key ? this.limitFor(key) : null
-    if (!key || !limit) return
-    const { machine, provider } = limit
-    if (!provider.credits) return this.showNotice(`No reset credits for ${provider.name}.`, 3000)
-    if (!machine.canReset) return this.showNotice('Resetting needs providers:manage. Pair again with that scope.', 6000)
-    if (this.confirmReset !== key) { this.confirmReset = key; return this.renderUsage() }
-    this.confirmReset = null
-    await this.showNotice(`resetting ${provider.name}…`, 20_000)
+    const key = this.chosenKey(usageLines(this.pageMachines(), Date.now(), this.usageDriver))
+    if (!key) return
+    if (key.startsWith('fam:')) {
+      this.usageDriver = key.slice(4)
+      this.pageCursor = 0
+      this.pageTop = 0
+      this.armed = null
+      return void this.renderUsage()
+    }
+    const account = this.accountFor(key)
+    if (!account) return
+    const machine = this.fleet.machine(account.machineId)
+    if (!account.credits || !account.reset) return this.showNotice(account.windows.length ? `${account.name}: no reset credits.` : `${account.name}: no limits reported.`, 3000)
+    if (!machine?.canReset) return this.showNotice('Resetting needs providers:manage. Pair again with that scope.', 6000)
+    if (this.armed?.kind !== 'reset' || this.armed.key !== key) { this.armed = { kind: 'reset', key }; return void this.renderUsage() }
+    this.armed = null
+    await this.showNotice(`resetting ${account.name}…`, 20_000)
     try {
-      const result = await machine.resetLimit(provider.instanceId)
+      const result = await machine.resetLimit(account.reset)
       await this.showNotice(result.warning ?? RESET_TEXT[result.outcome], 5000)
+    } catch (error) {
+      await this.showNotice(error, 6000)
+    }
+  }
+
+  // --- scheduled tasks ----------------------------------------------------------------------------
+
+  /** The task on the highlighted line, and the machine that owns it. */
+  private selectedTask() {
+    const machines = this.pageMachines()
+    const key = this.chosenKey(taskLines(machines, Date.now()))
+    if (!key) return null
+    for (const m of machines) {
+      const tasks = m.insights.scheduled
+      const task = tasks && !isMissing(tasks) ? tasks.find(t => taskKey(m.id, t.id) === key) : undefined
+      if (task) return { key, task, machine: this.fleet.machine(m.id) }
+    }
+    return null
+  }
+
+  private renderTasks() {
+    this.closePageStream()
+    const lines = taskLines(this.pageMachines(), Date.now())
+    const selected = this.chosenKey(lines)
+    const chosen = this.selectedTask()
+    const status = this.armed?.kind === 'task' && chosen
+      ? { text: `tap again: run "${chosen.task.title}" now · swipe: cancel`, brightness: BRIGHT }
+      : this.notice ? this.pageNotice('')
+      : chosen ? this.pageNotice(chosen.task.enabled ? 'tap: run now (asks first) · hold: pause' : 'hold: resume')
+      : this.pageNotice('tap+hold: pages')
+    const menu: Array<[number, string]> = [
+      ...this.pageMenu(),
+      ...(chosen ? [[MENU_TASK_RUN, 'Run now'], [MENU_TASK_PAUSE, chosen.task.enabled ? 'Pause' : 'Resume']] as Array<[number, string]> : []),
+      [MENU_REFRESH, 'Refresh'],
+    ]
+    return this.drawPage('tasks', 'Scheduled tasks', lines, selected, status, menu)
+  }
+
+  private async tapTasks() {
+    const chosen = this.selectedTask()
+    if (!chosen) return
+    if (!chosen.task.enabled) return this.showNotice('Paused. Hold to resume it.', 3000)
+    if (this.armed?.kind !== 'task' || this.armed.key !== chosen.key) { this.armed = { kind: 'task', key: chosen.key }; return void this.renderTasks() }
+    this.armed = null
+    await this.runSelectedTask()
+  }
+
+  private async runSelectedTask() {
+    const chosen = this.selectedTask()
+    if (!chosen?.machine) return
+    if (!chosen.machine.canOperateTasks) return this.showNotice('Running tasks needs operate access. Pair again with it.', 6000)
+    try {
+      await chosen.machine.runTask(chosen.task.id)
+      await this.showNotice(`● started: ${chosen.task.title}`, 4000)
+    } catch (error) {
+      await this.showNotice(error, 6000)
+    }
+  }
+
+  private async toggleSelectedTask() {
+    const chosen = this.selectedTask()
+    if (!chosen?.machine) return
+    if (!chosen.machine.canOperateTasks) return this.showNotice('Pausing tasks needs operate access. Pair again with it.', 6000)
+    this.armed = null
+    try {
+      await chosen.machine.setTaskPaused(chosen.task.id, chosen.task.enabled)
+      await this.showNotice(`${chosen.task.enabled ? '□ paused' : '● resumed'}: ${chosen.task.title}`, 3000)
     } catch (error) {
       await this.showNotice(error, 6000)
     }
@@ -513,11 +739,16 @@ export class GlassesController {
     if (this.pageStream?.id !== page) {
       this.closePageStream()
       this.pageLive = emptyLive()
+      this.pageImage = null
       this.pageStream = { id: page, handle: machine.openThread(meta.threadId, live => { this.pageLive = live; this.scheduleRender() }) }
     }
     const thread = machine.thread(meta.threadId)
     const reply = this.pageLive.messages.findLast(m => m.role === 'assistant' && m.text.trim())
-    const body = reply ? plainText(reply.text).split('\n').flatMap(line => (line.trim() ? wrapWidth(line, TEXT_W - 8) : [''])) : []
+    // A chart in the reply is drawn as a picture beside the text.
+    const { text, svg } = reply ? extractSvg(reply.text) : { text: '', svg: null }
+    const image = svg ? this.imageFor(svg) : null
+    const textWidthPx = image ? FULL_W - BAR_W - 4 - image.w - 8 : TEXT_W
+    const body = reply ? plainText(text).split('\n').flatMap(line => (line.trim() ? wrapWidth(line, textWidthPx - 8) : [''])) : []
     const lines: PageLine[] = !this.pageLive.sequence && !reply ? [{ text: 'Loading…', dim: true }]
       : body.length ? body.map(text => ({ text })) : [{ text: 'Nothing here yet. Hold to say what this page should show.', dim: true }]
     const busy = thread ? isBusy(thread.status) : false
@@ -527,7 +758,35 @@ export class GlassesController {
       : busy ? { text: `${spinner(this.tick)} updating${step ? ` · ${step.label}` : '…'}`, brightness: MID }
       : this.pageNotice([updated, 'hold: change this page'].filter(Boolean).join('   ·   '))
     const title = meta.title || thread?.title || 'Page'
-    return this.drawPage(`tpage:${page}`, title, lines, null, status, [...this.pageMenu(), ...this.voiceMenu(), [MENU_NEW_PAGE, 'New page by voice']])
+    const slot: ImageSlot | undefined = image ? { key: image.key, x: FULL_W - BAR_W - 4 - image.w, y: rowY(1), w: image.w, h: image.h, png: image.png } : undefined
+    return this.drawPage(`tpage:${page}`, title, lines, null, status, [...this.pageMenu(), ...this.voiceMenu(), [MENU_PAGE_REFRESH, 'Update this page'], [MENU_NEW_PAGE, 'New page by voice']], slot)
+  }
+
+  /** The picture for a page's SVG: drawn once per distinct SVG, shown when ready. */
+  private imageFor(svg: string): { key: string; png: Uint8Array; w: number; h: number } | null {
+    const key = hashText(svg)
+    if (this.pageImage?.key === key) return this.pageImage.png ? { key, ...this.pageImage.png } : null
+    this.pageImage = { key, png: null }
+    void renderSvgPng(svg).then(rendered => {
+      if (this.pageImage?.key !== key) return
+      this.pageImage = { key, png: rendered }
+      if (rendered) this.scheduleRender()
+    })
+    return null
+  }
+
+  /** Asks the thread behind the page to rewrite it now. */
+  private async refreshThreadPage() {
+    const meta = this.page && isThreadPage(this.page) ? this.threadPage(this.page) : undefined
+    const machine = meta && this.fleet.machine(meta.machineId)
+    const thread = meta && machine?.thread(meta.threadId)
+    if (!machine || !thread) return
+    try {
+      await machine.sendText(thread, 'Update this page now with fresh data. Reply with the whole page.')
+      await this.showNotice('● asked for an update', 3000)
+    } catch (error) {
+      await this.showNotice(error, 6000)
+    }
   }
 
   /** Back to `+ New thread` at the top of the list. */
@@ -673,14 +932,14 @@ export class GlassesController {
     const status = this.statusRow(busy)
     const bar = chatBar(lines.length, rows, this.scroll.fromBottom)
     return this.draw(`thread:${keyOf(thread)}:${time.w}`, [
-      { slot: 'head', x: 0, y: rowY(0), w: edge - TITLE_SIDE_W, h: rowsH(1), text: fitWidth(title, edge - TITLE_SIDE_W - 8), brightness: BRIGHT },
+      { slot: 'head', x: 0, y: rowY(0), w: edge - TITLE_SIDE_W, h: rowsH(1), text: fitWidth(this.activeAlert()?.text ?? title, edge - TITLE_SIDE_W - 8), brightness: BRIGHT },
       { slot: 'side', x: edge - TITLE_SIDE_W, y: rowY(0), w: TITLE_SIDE_W, h: rowsH(1), text: badge, brightness: mark === 'run' || mark === 'ask' ? BRIGHT : DIM },
       ...time.boxes,
       // Chat sits between the title and the live line, so the newest activity is at the bottom, under the newest message.
       { slot: 'body', x: 0, y: rowY(1), w: TEXT_W, h: rowsH(rows), text: loading ? 'Loading…' : bottomAnchor(view.lines, rows) || 'No messages yet.', brightness: MID },
       ...this.barBoxes(bar, rowY(1), rowsH(rows)),
       { slot: 'status', x: 0, y: rowY(1 + rows), w: FULL_W, h: rowsH(1), text: fitWidth(status.text, FULL_W - 4), brightness: status.brightness },
-    ], this.voiceMenu())
+    ], [...this.voiceMenu(), ...this.quickMenu()])
   }
 
   // --- answering ---------------------------------------------------------------------------
@@ -851,6 +1110,84 @@ export class GlassesController {
 
   // --- voice -------------------------------------------------------------------------------
 
+  // --- alerts ------------------------------------------------------------------------------
+
+  /** The alert in the header, while it is fresh. */
+  private activeAlert(): Alert | null {
+    if (this.alert && Date.now() >= this.alert.until) this.alert = null
+    return this.alert
+  }
+
+  private showAlert(alert: Alert | null) {
+    if (!alert) return
+    this.alert = { ...alert, until: Date.now() + ALERT_MS }
+    clearTimeout(this.alertTimer)
+    this.alertTimer = setTimeout(() => { this.alert = null; void this.refresh() }, ALERT_MS + 50)
+    void this.refresh()
+  }
+
+  /** Is this thread the one the user is looking at? Then it needs no announcement. */
+  private isWatching(a: Alert): boolean {
+    const target = a.action
+    if (!target || target === 'usage') return false
+    if (this.screen === 'thread' && this.current) return this.current.machineId === target.thread.machineId && this.current.id === target.thread.threadId
+    const page = this.page && this.screen === 'list' && isThreadPage(this.page) ? this.threadPage(this.page) : undefined
+    return Boolean(page && page.machineId === target.thread.machineId && page.threadId === target.thread.threadId)
+  }
+
+  /** Looks for what changed since last time (a thread needs you, finished, failed) and for limits running out. */
+  private checkAlerts(state: FleetState) {
+    const { alerts } = state.settings
+    // Threads behind pages are not pinned or listed, so look them up by id.
+    const pageThreads = state.settings.threadPages.flatMap(p => { const t = this.fleet.machine(p.machineId)?.thread(p.threadId); return t ? [t] : [] })
+    const pageKeys = new Set(pageThreads.map(keyOf))
+    const next = snapshotOf([...state.threads, ...pageThreads], pageKeys)
+    const changes = threadAlerts(this.lastSnap, next, alerts).filter(a => !this.isWatching(a))
+    this.lastSnap = next
+
+    const warnings = limitWarnings(usageAccounts(this.pageMachines()), alerts.limitPercent, Date.now())
+    const { fresh, active } = freshWarnings(warnings, this.limitActive)
+    this.limitActive = active
+    const limit: Alert[] = this.page === 'usage' ? [] : fresh.map(w => ({ key: w.key, text: `${MARK.ask} ${w.text}`, action: 'usage' as const }))
+    this.showAlert(summarize([...limit, ...changes]))
+  }
+
+  /** What a tap does on an alert: open the thread, or go to Usage. */
+  private followAlert(): boolean {
+    const alert = this.activeAlert()
+    if (!alert?.action) return false
+    this.alert = null
+    clearTimeout(this.alertTimer)
+    if (alert.action === 'usage') {
+      if (this.pages.includes('usage')) this.switchPage('usage')
+      else void this.renderList()
+    } else {
+      const { machineId, threadId } = alert.action.thread
+      const thread = this.fleet.machine(machineId)?.thread(threadId)
+      if (thread) void this.open(thread)
+    }
+    return true
+  }
+
+  /** Canned replies in the thread menu: one tap sends the words. */
+  private quickMenu(): Array<[number, string]> {
+    if (this.hold || this.recorder.busy) return []
+    return this.fleet.state.settings.quickReplies.slice(0, 5).map((text, i) => [MENU_QUICK + i, text])
+  }
+
+  private async sendQuick(text: string) {
+    const thread = this.current
+    const machine = thread && this.machineOf(thread)
+    if (!thread || !machine || this.screen !== 'thread') return
+    try {
+      await machine.sendText(thread, text)
+      this.scroll = jumpToBottom(this.scroll)
+      await this.showNotice(`● sent: ${text}`, 3000)
+    } catch (error) {
+      await this.showNotice(error, 6000)
+    }
+  }
+
   /** The glasses menu (tap, then long press) on screens that can record. */
   private voiceMenu(): Array<[number, string]> {
     if (this.hold) return [[MENU_CANCEL_SEND, 'Cancel voice send']]
@@ -956,12 +1293,12 @@ export class GlassesController {
     const forPage = this.composeKind === 'page'
     const title = forPage ? `Glasses page ${stamp}` : `Glasses ${stamp}`
     const threadId = await machine.launch({
-      settings, title, text: forPage ? `${PAGE_PROMPT}\n\n${voiceText(settings)}` : voiceText(settings),
+      settings, title, text: forPage ? `${pagePrompt(this.composeUpdates)}\n\n${voiceText(settings)}` : voiceText(settings),
       attachment: { name: `voice-${Date.now()}.wav`, mimeType: 'audio/wav', bytes: wav },
     })
     if (forPage) {
       const id = threadPageId(machine.id, threadId)
-      const page: ThreadPage = { id, machineId: machine.id, threadId, title: 'New page' }
+      const page: ThreadPage = { id, machineId: machine.id, threadId, title: 'New page', updates: this.composeUpdates }
       await this.fleet.updateSettings({
         threadPages: [...settings.threadPages, page],
         pages: [...settings.pages, id],
@@ -1023,6 +1360,18 @@ export class GlassesController {
         else void this.showNotice('Nothing to cancel.', 2000)
       } else if (item >= MENU_PAGE && item < MENU_PAGE + this.pages.length) {
         this.switchPage(this.pages[item - MENU_PAGE])
+      } else if (item >= MENU_QUICK && item < MENU_QUICK + 5) {
+        const reply = this.fleet.state.settings.quickReplies[item - MENU_QUICK]
+        if (reply) void this.sendQuick(reply)
+      } else if (item === MENU_BACK) {
+        this.usageDriver = null; this.pageCursor = 0; this.pageTop = 0; this.armed = null
+        void this.renderList()
+      } else if (item === MENU_TASK_RUN) {
+        void this.runSelectedTask()
+      } else if (item === MENU_TASK_PAUSE) {
+        void this.toggleSelectedTask()
+      } else if (item === MENU_PAGE_REFRESH) {
+        void this.refreshThreadPage()
       } else if (item === MENU_REFRESH) {
         for (const m of this.fleet.state.machines) this.fleet.machine(m.id)?.refreshInsights(true)
       } else if (item === MENU_NEW_PAGE) {
@@ -1061,7 +1410,8 @@ export class GlassesController {
       else if (this.screen === 'answer') void this.closeAnswer()
       else if (this.screen === 'thread') void this.closeThread()
       else if (this.screen === 'compose') { this.screen = 'list'; void this.renderList() }
-      else if (this.confirmReset) { this.confirmReset = null; void this.renderList() }
+      else if (this.armed) { this.armed = null; void this.renderList() }
+      else if (this.page === 'usage' && this.usageDriver) { this.usageDriver = null; this.pageCursor = 0; this.pageTop = 0; void this.renderList() }
       else if (this.page !== this.fleet.state.settings.startPage) this.switchPage(this.fleet.state.settings.startPage)
       else void this.bridge.shutDownPageContainer(1)
       return
@@ -1070,6 +1420,8 @@ export class GlassesController {
       if (this.latched && !this.recorder.paused) return // hands-free: the touchpad is not held
       this.latched = false // holding to continue a paused hands-free recording goes back to push-to-talk
       if (this.screen === 'list' && this.page && isThreadPage(this.page)) void this.startRecording()
+      else if (this.screen === 'list' && this.page === 'dashboard') void this.holdDashboard()
+      else if (this.screen === 'list' && this.page === 'tasks') void this.toggleSelectedTask()
       else if (this.screen === 'list') { if (this.page === 'pinned' || this.page === 'chats') this.jumpToTop() }
       else void this.startRecording()
       return
@@ -1094,11 +1446,11 @@ export class GlassesController {
 
     if (any(T.CLICK_EVENT)) {
       if (this.screen === 'status' && this.fleet.state.phase === 'unpaired') { void this.fleet.startDemo(); return }
+      if (this.screen === 'list' && this.followAlert()) return
       if (this.screen === 'list' && this.page === 'usage') void this.tapUsage()
-      else if (this.screen === 'list' && this.page === 'dashboard') {
-        const asking = [...this.pinnedList, ...this.otherList].find(t => t.needsInput || t.status === 'waiting')
-        if (asking) void this.open(asking)
-      } else if (this.screen === 'list' && this.page && isThreadPage(this.page)) { this.pageTop = 0; void this.renderList() }
+      else if (this.screen === 'list' && this.page === 'dashboard') void this.tapDashboard()
+      else if (this.screen === 'list' && this.page === 'tasks') void this.tapTasks()
+      else if (this.screen === 'list' && this.page && isThreadPage(this.page)) { this.pageTop = 0; void this.renderList() }
       else if (this.screen === 'list') this.openCursor()
       else if (this.screen === 'answer') { if (!this.sending) void this.chooseAnswer() }
       // Tap in a thread: answer what the agent is asking, or jump back to the newest message.
@@ -1111,11 +1463,13 @@ export class GlassesController {
 
     if (text === T.SCROLL_TOP_EVENT || text === T.SCROLL_BOTTOM_EVENT) {
       const up = text === T.SCROLL_TOP_EVENT
-      if (this.screen === 'list' && this.page === 'usage') {
-        this.confirmReset = null
-        this.pageCursor = Math.max(0, this.pageCursor + (up ? -1 : 1))
+      if (this.screen === 'list' && (this.page === 'usage' || this.page === 'tasks' || this.page === 'dashboard')) {
+        this.armed = null
+        // Move the highlight when there is something to choose, otherwise scroll.
+        if (this.choices(this.pageLines()).length) this.pageCursor = Math.max(0, this.pageCursor + (up ? -1 : 1))
+        else this.pageTop = Math.max(0, this.pageTop + (up ? -1 : 1))
         void this.renderList()
-      } else if (this.screen === 'list' && (this.page === 'dashboard' || (this.page && isThreadPage(this.page)))) {
+      } else if (this.screen === 'list' && this.page && isThreadPage(this.page)) {
         this.pageTop = Math.max(0, this.pageTop + (up ? -1 : 1))
         void this.renderList()
       } else if (this.screen === 'list') this.moveCursor(up ? -1 : 1)

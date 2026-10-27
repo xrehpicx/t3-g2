@@ -270,7 +270,7 @@ describe('formatClock', () => {
 
 describe('list details', () => {
   const t = (over: Partial<PinnedThread> = {}) => thread({ title: 'Fix login', project: 'storefront', machineLabel: 'imaimain', status: 'running', ...over })
-  const glance = { step: '$ pnpm test', reply: '## Done\n\nAll **green**.' }
+  const glance = { step: '$ pnpm test', reply: '## Done\n\nAll **green**.', request: null }
   it('shows only what is chosen, in a fixed order', () => {
     expect(listDetail(['activity'], t(), glance, true)).toBe('$ pnpm test')
     expect(listDetail(['machine', 'project', 'activity'], t(), glance, true)).toBe('$ pnpm test · storefront · imaimain')

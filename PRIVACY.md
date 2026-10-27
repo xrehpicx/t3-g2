@@ -6,7 +6,7 @@ T3 Code G2 is a client for [T3 Code](https://github.com/pingdotgg/t3code) server
 
 ## What the app connects to
 
-Only the T3 Code servers you pair it with, at the addresses you enter or approve. Nothing is sent to the developer of this app or to any other third party. From those servers it reads your threads and, for the Dashboard and Usage pages, the machine's CPU and memory, usage limits, scheduled tasks and token spend. It shows them on your glasses and phone and stores none of them.
+Only the T3 Code servers you pair it with, at the addresses you enter or approve. Nothing is sent to the developer of this app or to any other third party. From those servers it reads your threads and, for the Dashboard and Usage pages, the machine's CPU and memory, usage limits for each account a server reports (including accounts behind a usage-limit proxy, shown by email), scheduled tasks and token spend. It can also, when you ask on the glasses, run or pause a scheduled task, allow or deny an approval, or spend a reset credit. It shows them on your glasses and phone and stores none of them.
 
 ## Permissions
 

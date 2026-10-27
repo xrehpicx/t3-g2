@@ -1,6 +1,8 @@
 import type { Net } from '../net'
+import { mergeAccounts, providerAccounts, sourceAccounts, type LimitAccount, type RawSource, type ResetTarget } from './limits'
 import { rpc } from './rpc'
 import type { Session } from './session'
+import { openStream } from './stream'
 
 /**
  * Everything the dashboard and usage pages show about one machine, beyond its threads: provider
@@ -12,24 +14,6 @@ export const hasScope = (session: Session, scope: string) => session.scope.split
 
 export const DIAGNOSTICS_SCOPE = 'diagnostics:read'
 export const PROVIDERS_SCOPE = 'providers:manage'
-
-export interface LimitWindow {
-  id: string
-  kind: 'session' | 'weekly' | 'monthly' | 'other' | string
-  label: string
-  usedPercent: number
-  resetsAt?: string
-}
-
-export interface ProviderLimits {
-  instanceId: string
-  name: string
-  windows: LimitWindow[]
-  /** Reset credits that can be spent to clear the limit now. */
-  credits: number
-  /** Set when the provider reports no limits (unsupported, or the last check failed). */
-  unavailable: string | null
-}
 
 export interface SpendTotals {
   costUsd: number
@@ -52,19 +36,26 @@ export interface HostResources {
   totalMemoryBytes: number
 }
 
-export interface ScheduledRun {
+export interface ScheduledTask {
+  id: string
   title: string
-  nextRunAt: string
+  enabled: boolean
+  /** Null when paused or finished. */
+  nextRunAt: string | null
+  lastRunAt: string | null
+  /** The last run's outcome, as the server words it (for example "succeeded" or "failed"). */
+  lastRunStatus: string | null
 }
 
 /** A part that could not be read, with the reason shown in its place. */
 export interface Missing { missing: string }
 
 export interface Insights {
-  limits: ProviderLimits[] | Missing | null
+  /** Every account's usage limits: the machine's own providers plus any limit source's accounts. */
+  limits: LimitAccount[] | Missing | null
   usage: UsageDigest | Missing | null
   host: HostResources | Missing | null
-  scheduled: ScheduledRun[] | Missing | null
+  scheduled: ScheduledTask[] | Missing | null
 }
 
 export const emptyInsights = (): Insights => ({ limits: null, usage: null, host: null, scheduled: null })
@@ -72,33 +63,36 @@ export const isMissing = (value: unknown): value is Missing => Boolean(value && 
 
 // --- reading --------------------------------------------------------------------------------
 
-interface RawProvider {
-  instanceId: string
-  displayName?: string
-  enabled?: boolean
-  usageLimits?: {
-    windows?: LimitWindow[]
-    resetCredits?: { availableCount?: number }
-    unavailable?: { reason?: string; message?: string }
-  }
+/**
+ * The accounts behind a usage-limit source (a proxy holding several subscriptions). The server
+ * announces them on its config stream, so listen until the first announcement, then hang up.
+ */
+export function readSources(net: Net, session: Session, timeoutMs = 12_000): Promise<RawSource[]> {
+  return new Promise(resolve => {
+    let done = false
+    const finish = (sources: RawSource[]) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      handle.close()
+      resolve(sources)
+    }
+    const handle = openStream<{ type?: string; payload?: { sources?: RawSource[] } }>({
+      net, session, tag: 'subscribeServerConfig',
+      payload: () => ({ usageLimitSources: true, workspaceSnapshotsOnDemand: true }),
+      onItem: item => { if (item.type === 'usageLimitSourcesUpdated') finish(item.payload?.sources ?? []) },
+    })
+    const timer = setTimeout(() => finish([]), timeoutMs)
+  })
 }
 
-export function toLimits(providers: RawProvider[]): ProviderLimits[] {
-  return providers
-    .filter(p => p.enabled !== false && p.usageLimits)
-    .map(p => ({
-      instanceId: p.instanceId,
-      name: p.displayName || p.instanceId,
-      windows: p.usageLimits?.windows ?? [],
-      credits: p.usageLimits?.resetCredits?.availableCount ?? 0,
-      unavailable: p.usageLimits?.windows?.length ? null : p.usageLimits?.unavailable?.reason ?? 'unsupported',
-    }))
-}
-
-/** Provider limits. `workspaceSnapshotsOnDemand` keeps the reply small (no per-project snapshots). */
-export async function readLimits(net: Net, session: Session): Promise<ProviderLimits[]> {
-  const reply = await rpc<{ providers: RawProvider[] }>(net, session, 'server.refreshProviders', { workspaceSnapshotsOnDemand: true })
-  return toLimits(reply.providers ?? [])
+/** Every account's limits. A source that cannot be reached just contributes nothing. */
+export async function readLimits(net: Net, session: Session, machineId: string): Promise<LimitAccount[]> {
+  const [providers, sources] = await Promise.all([
+    rpc<{ providers: Parameters<typeof providerAccounts>[0] }>(net, session, 'server.refreshProviders', { workspaceSnapshotsOnDemand: true }),
+    readSources(net, session).catch(() => [] as RawSource[]),
+  ])
+  return mergeAccounts(providerAccounts(providers.providers ?? [], machineId), sourceAccounts(sources, machineId))
 }
 
 interface RawBucket {
@@ -148,19 +142,28 @@ export async function readHost(net: Net, session: Session): Promise<HostResource
   return { cpu: r.cpuUtilization, usedMemoryBytes: r.totalMemoryBytes - r.availableMemoryBytes, totalMemoryBytes: r.totalMemoryBytes }
 }
 
-export async function readScheduled(net: Net, session: Session): Promise<ScheduledRun[]> {
-  const r = await rpc<{ tasks: Array<{ title: string; enabled: boolean; nextRunAt: string | null }> }>(net, session, 'scheduledTasks.list', {})
-  return (r.tasks ?? [])
-    .filter(t => t.enabled && t.nextRunAt)
-    .map(t => ({ title: t.title, nextRunAt: t.nextRunAt! }))
-    .sort((a, b) => Date.parse(a.nextRunAt) - Date.parse(b.nextRunAt))
+/** Every scheduled task: soonest first, paused ones last. */
+export async function readScheduled(net: Net, session: Session): Promise<ScheduledTask[]> {
+  const r = await rpc<{ tasks: Array<{ id: string; title: string; enabled: boolean; nextRunAt: string | null; lastRunAt?: string | null; lastRunStatus?: unknown }> }>(net, session, 'scheduledTasks.list', {})
+  return sortTasks((r.tasks ?? []).map(t => ({
+    id: t.id, title: t.title, enabled: t.enabled, nextRunAt: t.nextRunAt ?? null, lastRunAt: t.lastRunAt ?? null,
+    lastRunStatus: typeof t.lastRunStatus === 'string' ? t.lastRunStatus : null,
+  })))
 }
+
+export function sortTasks(tasks: ScheduledTask[]): ScheduledTask[] {
+  const when = (t: ScheduledTask) => (t.enabled && t.nextRunAt ? Date.parse(t.nextRunAt) : Number.MAX_SAFE_INTEGER)
+  return [...tasks].sort((a, b) => when(a) - when(b) || a.title.localeCompare(b.title))
+}
+
+export const runTaskNow = (net: Net, session: Session, id: string) => rpc(net, session, 'scheduledTasks.runNow', { id })
+export const setTaskEnabled = (net: Net, session: Session, id: string, enabled: boolean) => rpc(net, session, 'scheduledTasks.setEnabled', { id, enabled })
 
 export type ResetOutcome = 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed'
 
-/** Spends one reset credit to clear a provider's usage limit now. */
-export async function useResetCredit(net: Net, session: Session, instanceId: string): Promise<{ outcome: ResetOutcome; warning?: string }> {
-  return rpc(net, session, 'provider.consumeResetCredit', { instanceId })
+/** Spends one reset credit to clear an account's usage limit now. */
+export async function useResetCredit(net: Net, session: Session, target: ResetTarget): Promise<{ outcome: ResetOutcome; warning?: string }> {
+  return rpc(net, session, 'provider.consumeResetCredit', target)
 }
 
 export const RESET_TEXT: Record<ResetOutcome, string> = {

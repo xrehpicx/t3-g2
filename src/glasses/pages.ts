@@ -1,4 +1,6 @@
-import { isMissing, type Insights, type ProviderLimits } from '../t3/insights'
+import type { PendingRequest } from '../t3/activity'
+import { isMissing, type Insights, type ScheduledTask } from '../t3/insights'
+import { accountOrder, dedupeAccounts, families, isFree, orderedWindows, shortNames, spanText, windowTag, type LimitAccount } from '../t3/limits'
 import { isBusy } from '../t3/pinned'
 import type { PinnedThread } from '../t3/types'
 import { charWidth, fitWidth, SAFETY_PX, textWidth } from './font'
@@ -57,39 +59,86 @@ export interface PageMachine {
 
 // --- usage ----------------------------------------------------------------------------------
 
-function limitLines(machine: PageMachine, limits: ProviderLimits[], now: number): PageLine[] {
+/** Every account across machines, each once. */
+export function usageAccounts(machines: PageMachine[]): LimitAccount[] {
+  return dedupeAccounts(machines.map(m => (m.insights.limits && !isMissing(m.insights.limits) ? m.insights.limits : [])))
+}
+
+/** The key of a choosable provider line on the overview. */
+export const familyKey = (driver: string) => `fam:${driver}`
+/** The key of a choosable account line. */
+export const accountKey = (key: string) => `acct:${key}`
+
+function overviewLines(accounts: LimitAccount[], now: number): PageLine[] {
   const lines: PageLine[] = []
-  for (const p of limits.filter(l => l.windows.length)) {
-    const key = `${machine.id}:${p.instanceId}`
-    p.windows.forEach((w, i) => {
-      const reset = w.resetsAt ? `  ${until(w.resetsAt, now)}` : ''
-      const pct = `${Math.round(w.usedPercent)}%`
-      lines.push({ text: `${padTo(i ? '' : p.name, 90)}${padTo(w.label, 90)}${meter(w.usedPercent)} ${padTo(pct, 52)}${reset}`, select: key })
-    })
-    if (p.credits) lines.push({ text: `${padTo('', 90)}○ ${plural(p.credits, 'reset credit')} · tap the limit to use one`, dim: true })
+  for (const f of families(accounts).filter(f => f.counted > 0)) {
+    const credits = f.credits ? `   ○ ${plural(f.credits, 'reset credit')}` : ''
+    const head = f.counted > 1
+      ? `${padTo(f.provider, 80)}${f.free} of ${f.counted} free${f.free === 0 && f.nextFree ? `   next free ${spanText(f.nextFree.at - now)} (${f.nextFree.name})` : f.nextReset ? `   next reset ${spanText(f.nextReset.at - now)} (${f.nextReset.name})` : ''}${credits}`
+      : `${padTo(f.provider, 80)}${f.accounts[0].plan ?? f.accounts[0].name}${credits}`
+    lines.push({ text: head, select: familyKey(f.driver) })
+    for (const w of f.windows) {
+      const left = Math.round(100 - w.usedPercent)
+      const room = f.counted > 1 ? `${w.withRoom}/${w.accounts} free` : ''
+      const reset = w.firstReset ? spanText(w.firstReset.at - now) : ''
+      lines.push({ text: `${padTo('', 24)}${padTo(w.label, 128)}${meter(w.usedPercent, 5)} ${padTo(`${left}% left`, 88)}${[room, reset].filter(Boolean).join(' · ')}`, dim: true })
+    }
   }
-  const quiet = limits.filter(l => !l.windows.length).map(l => l.name)
+  const reporting = new Set(accounts.filter(a => a.windows.length).map(a => a.driver))
+  const quiet = [...new Set(accounts.filter(a => !a.windows.length && !reporting.has(a.driver)).map(a => a.provider))]
   if (quiet.length) lines.push({ text: `${quiet.join(', ')}: no limits reported`, dim: true })
   return lines
 }
 
-export function usageLines(machines: PageMachine[], now: number): PageLine[] {
-  const several = machines.length > 1
-  const lines: PageLine[] = []
-  for (const m of machines) {
-    if (several) lines.push({ text: `${m.online ? MARK.new : MARK.done} ${m.label}` })
-    const { limits, usage } = m.insights
-    if (!limits) lines.push({ text: 'Limits: loading…', dim: true })
-    else if (isMissing(limits)) lines.push({ text: `Limits: ${limits.missing}`, dim: true })
-    else lines.push(...limitLines(m, limits, now))
+/** One line per account of a provider: which windows are used up and when they come back. */
+function accountLines(accounts: LimitAccount[], driver: string, now: number): PageLine[] {
+  const family = families(accounts).find(f => f.driver === driver)
+  if (!family) return [{ text: 'No accounts for this provider.', dim: true }]
+  const names = shortNames(family.accounts)
+  const lines: PageLine[] = [{ text: `${family.provider}   ${family.free} of ${family.counted} free · swipe to browse · double tap: back`, dim: true }]
+  for (const a of accountOrder(family.accounts.filter(a => a.windows.length))) {
+    const parts = orderedWindows(a).slice(0, 3).map(w => {
+      const reset = w.resetsAt && w.usedPercent > 0 ? ` ${spanText(Date.parse(w.resetsAt) - now)}` : ''
+      return `${windowTag(w)} ${Math.round(w.usedPercent)}%${reset}`
+    })
+    const mark = isFree(a) ? MARK.done : MARK.fail
+    const credit = a.credits ? `  ○ ${a.credits}` : ''
+    lines.push({ text: `${mark} ${padTo(names.get(a.key) ?? a.name, 110)}${parts.join('   ')}${credit}`, select: accountKey(a.key) })
+  }
+  return lines
+}
 
-    if (!usage) lines.push({ text: 'Spend: loading…', dim: true })
-    else if (isMissing(usage)) lines.push({ text: `Spend: ${usage.missing}`, dim: true })
+/**
+ * The Usage page. With no provider chosen it is the overview: each provider's accounts pooled (how many
+ * are free, how much is left, which resets first), then spend. With one chosen it lists that provider's
+ * accounts.
+ */
+export function usageLines(machines: PageMachine[], now: number, driver: string | null = null): PageLine[] {
+  const accounts = usageAccounts(machines)
+  const lines: PageLine[] = []
+  if (driver) return accountLines(accounts, driver, now)
+
+  const states = machines.map(m => m.insights.limits)
+  if (accounts.length) lines.push(...overviewLines(accounts, now))
+  else if (states.every(l => !l)) lines.push({ text: 'Limits: loading…', dim: true })
+  else {
+    const reason = states.find(isMissing)
+    lines.push({ text: reason && isMissing(reason) ? `Limits: ${reason.missing}` : 'No usage limits reported.', dim: true })
+  }
+
+  const several = machines.length > 1
+  for (const m of machines) {
+    const usage = m.insights.usage
+    const prefix = several ? `${m.label}  ` : ''
+    if (!usage) lines.push({ text: `${prefix}Spend: loading…`, dim: true })
+    else if (isMissing(usage)) lines.push({ text: `${prefix}Spend: ${usage.missing}`, dim: true })
     else {
       const t = usage.today, w = usage.week
-      lines.push({ text: `${padTo('Today', 80)}${padTo(money(t.costUsd), 80)}${padTo(`${tokens(t.tokens)} tokens`, 130)}${Math.round(t.cachedShare * 100)}% cached` })
-      lines.push({ text: `${padTo('7 days', 80)}${padTo(money(w.costUsd), 80)}${padTo(`${tokens(w.tokens)} tokens`, 130)}${Math.round(w.cachedShare * 100)}% cached` })
-      if (usage.models.length) {
+      const cached = (x: typeof t) => `${padTo(money(x.costUsd), 80)}${padTo(`${tokens(x.tokens)} tokens`, 130)}${Math.round(x.cachedShare * 100)}% cached`
+      // With several machines, the machine's name leads and the period follows it.
+      lines.push({ text: `${several ? `${padTo(m.label, 130)}${padTo('today', 60)}` : padTo('Today', 80)}${cached(t)}` })
+      lines.push({ text: `${several ? `${padTo('', 130)}${padTo('7 days', 60)}` : padTo('7 days', 80)}${cached(w)}` })
+      if (usage.models.length && !several) {
         lines.push({ text: `${padTo('Top', 80)}${usage.models.slice(0, 3).map(x => `${shortModel(x.model)} ${money(x.costUsd)}`).join(' · ')}`, dim: true })
       }
     }
@@ -103,11 +152,37 @@ export interface DashboardInput {
   threads: PinnedThread[]
   unread: (t: PinnedThread) => boolean
   step: (t: PinnedThread) => string | null
+  /** What an asking thread is waiting on, when known. */
+  request?: (t: PinnedThread) => PendingRequest | null
+  /** Daily spend limit in dollars; 0 is off. */
+  budget?: number
+  /** Make asking threads choosable, so approvals can be answered from here. */
+  actions?: boolean
   machines: PageMachine[]
   now: number
 }
 
-export function dashboardLines({ threads, unread, step, machines, now }: DashboardInput): PageLine[] {
+/** The key of a choosable "needs you" line. */
+export const askKey = (t: { machineId: string; id: string }) => `ask:${t.machineId}:${t.id}`
+
+/** A short phrase for what the agent is waiting on: "Run a command?" or the question itself. */
+export function requestSummary(request: PendingRequest | null | undefined): string {
+  if (!request) return ''
+  if (request.kind === 'approval') return [request.what, request.detail].filter(Boolean).join(' ')
+  return request.questions[0]?.question ?? 'a question'
+}
+
+/** Which of an approval's options allow and which deny, whatever the agent calls them. */
+export function approvalDecisions(request: Extract<PendingRequest, { kind: 'approval' }>): { allow: string; deny: string } {
+  const decisions = request.options.map(o => o.decision)
+  const isDeny = (d: string) => /decline|deny|reject|cancel/i.test(d)
+  return {
+    allow: decisions.includes('accept') ? 'accept' : decisions.find(d => !isDeny(d)) ?? decisions[0] ?? 'accept',
+    deny: decisions.find(d => d === 'decline') ?? decisions.find(isDeny) ?? 'decline',
+  }
+}
+
+export function dashboardLines({ threads, unread, step, request, budget = 0, actions = false, machines, now }: DashboardInput): PageLine[] {
   const lines: PageLine[] = []
   const marks = threads.map(t => markFor(t.status, t.needsInput, unread(t)))
   const count = (mark: string) => marks.filter(m => m === mark).length
@@ -119,8 +194,11 @@ export function dashboardLines({ threads, unread, step, machines, now }: Dashboa
   ].filter(Boolean)
   lines.push({ text: summary.length ? summary.join('   ') : 'All quiet. Nothing needs you.' })
 
-  for (const t of threads.filter(t => t.needsInput || t.status === 'waiting').slice(0, 2)) lines.push({ text: `${MARK.ask} ${t.title}`, dim: true })
-  for (const t of threads.filter(t => isBusy(t.status) && !t.needsInput).slice(0, 3)) {
+  for (const t of threads.filter(t => t.needsInput || t.status === 'waiting').slice(0, 4)) {
+    const what = requestSummary(request?.(t))
+    lines.push({ text: `${MARK.ask} ${t.title}${what ? ` · ${what}` : ''}`, ...(actions ? { select: askKey(t) } : { dim: true }) })
+  }
+  for (const t of threads.filter(t => isBusy(t.status) && !t.needsInput && t.status !== 'waiting').slice(0, 3)) {
     const doing = step(t)
     lines.push({ text: `${MARK.run} ${t.title}${doing ? ` · ${doing}` : ''}`, dim: true })
   }
@@ -134,25 +212,60 @@ export function dashboardLines({ threads, unread, step, machines, now }: Dashboa
     lines.push({ text: `${m.online ? MARK.new : MARK.done} ${padTo(m.label, 150)}${stats}` })
   }
 
+  const todayCost = todaySpend(machines)
   const spends = machines.map(m => m.insights.usage).filter((u): u is Exclude<typeof u, null | { missing: string }> => Boolean(u) && !isMissing(u))
   if (spends.length) {
-    const today = spends.reduce((s, u) => s + u.today.costUsd, 0)
     const week = spends.reduce((s, u) => s + u.week.costUsd, 0)
     const toks = spends.reduce((s, u) => s + u.today.tokens, 0)
-    lines.push({ text: `${padTo('Spend', 95)}today ${money(today)} · ${tokens(toks)} tokens · 7 days ${money(week)}` })
+    const budgetNote = budget > 0 ? ` of $${budget}` : ''
+    lines.push({ text: `${padTo('Spend', 95)}today ${money(todayCost ?? 0)}${budgetNote} · ${tokens(toks)} tokens · 7 days ${money(week)}` })
   }
 
-  const busiest = machines.flatMap(m => (m.insights.limits && !isMissing(m.insights.limits) ? m.insights.limits : []))
-    .filter(p => p.windows.length)
-    .map(p => ({ name: p.name, w: p.windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a)) }))
-  if (busiest.length) {
-    const parts = [...new Set(busiest.map(b => `${b.name} ${Math.round(b.w.usedPercent)}% ${b.w.label.toLowerCase()}`))]
-    lines.push({ text: `${padTo('Limits', 95)}${parts.join(' · ')}` })
-  }
+  const pools = families(usageAccounts(machines)).filter(f => f.counted > 0).map(f => {
+    const w = f.windows.find(x => x.kind === 'weekly' && !x.label.includes('·')) ?? f.windows[0]
+    const left = w ? `${Math.round(100 - w.usedPercent)}% left` : ''
+    return f.counted > 1 ? `${f.provider} ${f.free}/${f.counted} free · ${left}` : `${f.provider} ${left}`
+  })
+  if (pools.length) lines.push({ text: `${padTo('Limits', 95)}${pools.join(' · ')}` })
 
   const next = machines.flatMap(m => (m.insights.scheduled && !isMissing(m.insights.scheduled) ? m.insights.scheduled : []))
+    .filter((t): t is ScheduledTask & { nextRunAt: string } => t.enabled && t.nextRunAt !== null)
     .sort((a, b) => Date.parse(a.nextRunAt) - Date.parse(b.nextRunAt))[0]
   if (next) lines.push({ text: `${padTo('Next run', 95)}${next.title} · in ${until(next.nextRunAt, now)}` })
+  return lines
+}
+
+/** Today's spend across every machine that reports it, or null when none does. */
+export function todaySpend(machines: Array<{ insights: Insights }>): number | null {
+  let total: number | null = null
+  for (const m of machines) {
+    const usage = m.insights.usage
+    if (usage && !isMissing(usage)) total = (total ?? 0) + usage.today.costUsd
+  }
+  return total
+}
+
+// --- scheduled tasks ----------------------------------------------------------------------------
+
+/** The key of a choosable task line: machine id, then task id. */
+export const taskKey = (machineId: string, taskId: string) => `task:${machineId}:${taskId}`
+
+export function taskLines(machines: PageMachine[], now: number): PageLine[] {
+  const several = machines.length > 1
+  const lines: PageLine[] = []
+  for (const m of machines) {
+    if (several) lines.push({ text: `${m.online ? MARK.new : MARK.done} ${m.label}` })
+    const tasks = m.insights.scheduled
+    if (!tasks) { lines.push({ text: 'Scheduled tasks: loading…', dim: true }); continue }
+    if (isMissing(tasks)) { lines.push({ text: `Scheduled tasks: ${tasks.missing}`, dim: true }); continue }
+    if (!tasks.length) { lines.push({ text: 'No scheduled tasks. Ask a thread to schedule one.', dim: true }); continue }
+    for (const t of tasks) {
+      const failed = /fail|error/i.test(t.lastRunStatus ?? '')
+      const mark = !t.enabled ? MARK.stop : failed ? MARK.fail : MARK.done
+      const when = !t.enabled ? 'paused' : t.nextRunAt ? `in ${until(t.nextRunAt, now)}` : 'done'
+      lines.push({ text: `${mark} ${padTo(t.title, 330)}${when}`, select: taskKey(m.id, t.id) })
+    }
+  }
   return lines
 }
 

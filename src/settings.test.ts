@@ -41,15 +41,19 @@ describe('settings', () => {
     expect(normalizeSettings({ listFields: 'activity' }).listFields).toEqual(['activity', 'machine'])
   })
   it('enables every built-in page by default and opens on Pinned', () => {
-    expect(normalizeSettings({}).pages).toEqual(['pinned', 'chats', 'dashboard', 'usage'])
+    expect(normalizeSettings({}).pages).toEqual(['pinned', 'chats', 'dashboard', 'usage', 'tasks'])
     expect(normalizeSettings({}).startPage).toBe('pinned')
   })
+  it('switches on the Scheduled tasks page for settings saved before it existed', () => {
+    expect(normalizeSettings({ pages: ['pinned', 'usage'] }).pages).toEqual(['pinned', 'usage', 'tasks'])
+    expect(normalizeSettings({ pages: ['pinned'], alerts: {} }).pages).toEqual(['pinned'])
+  })
   it('keeps at least one page, a valid start page, and thread pages that are known', () => {
-    expect(normalizeSettings({ pages: [] }).pages).toEqual(['pinned'])
-    expect(normalizeSettings({ pages: ['usage', 'dashboard'], startPage: 'pinned' })).toMatchObject({ pages: ['dashboard', 'usage'], startPage: 'dashboard' })
+    expect(normalizeSettings({ pages: [], alerts: {} }).pages).toEqual(['pinned'])
+    expect(normalizeSettings({ pages: ['usage', 'dashboard'], startPage: 'pinned', alerts: {} })).toMatchObject({ pages: ['dashboard', 'usage'], startPage: 'dashboard' })
     const threadPages = [{ machineId: 'm', threadId: 't', title: 'PRs' }, { machineId: 'm', threadId: 't', title: 'dupe' }, { threadId: 'bad' }]
-    const s = normalizeSettings({ pages: ['thread:m:t', 'thread:m:gone', 'pinned'], threadPages, startPage: 'thread:m:t' })
-    expect(s.threadPages).toEqual([{ id: 'thread:m:t', machineId: 'm', threadId: 't', title: 'PRs' }])
+    const s = normalizeSettings({ pages: ['thread:m:t', 'thread:m:gone', 'pinned'], threadPages, startPage: 'thread:m:t', alerts: {} })
+    expect(s.threadPages).toEqual([{ id: 'thread:m:t', machineId: 'm', threadId: 't', title: 'PRs', updates: 'timer' }])
     expect(s.pages).toEqual(['pinned', 'thread:m:t'])
     expect(s.startPage).toBe('thread:m:t')
   })

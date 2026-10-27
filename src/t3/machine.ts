@@ -1,10 +1,11 @@
 import type { Net } from '../net'
-import { applyEvent, currentStep, fromSnapshot as liveFromSnapshot, type ThreadEvent, type ThreadLive } from './activity'
+import { applyEvent, currentStep, type PendingRequest, fromSnapshot as liveFromSnapshot, type ThreadEvent, type ThreadLive } from './activity'
 import { AuthError, fetchThread } from './http'
 import {
   DIAGNOSTICS_SCOPE, emptyInsights, hasScope, PROVIDERS_SCOPE, readHost, readLimits, readScheduled, readUsage,
-  useResetCredit, type Insights,
+  runTaskNow, setTaskEnabled, useResetCredit, type Insights,
 } from './insights'
+import type { ResetTarget } from './limits'
 import { launchThread, type LaunchInput } from './launch'
 import { isBusy, isGlassesThread, isOtherThread, toPinned } from './pinned'
 import { rpc, warmRpc } from './rpc'
@@ -35,6 +36,8 @@ export interface Glance {
   step: string | null
   /** The newest agent reply, as written. */
   reply: string | null
+  /** The oldest question or approval the agent is waiting on. */
+  request: PendingRequest | null
 }
 
 /** What the list wants to know about each visible thread. */
@@ -175,16 +178,16 @@ export class Machine {
     const live = this.watched.get(threadId)?.live
     if (!live) return undefined
     const reply = live.messages.findLast(m => m.role === 'assistant' && m.text.trim())
-    return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null }
+    return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null, request: live.requests[0] ?? null }
   }
 
   /**
    * Refreshes whatever part of the dashboard and usage data has gone stale. Cheap to call often: each
    * part has its own lifetime, and parts the pairing has no scope for are marked missing, not fetched.
    */
-  refreshInsights(force = false) {
+  refreshInsights(force = false, only?: ReadonlyArray<keyof Insights>) {
     const now = Date.now()
-    const due = (part: keyof Insights) => force || now - (this.insightAt[part] ?? 0) > INSIGHT_TTL[part]
+    const due = (part: keyof Insights) => (!only || only.includes(part)) && (force || now - (this.insightAt[part] ?? 0) > INSIGHT_TTL[part])
     const load = <K extends keyof Insights>(part: K, read: () => Promise<Insights[K]>) => {
       if (!due(part)) return
       this.insightAt[part] = now
@@ -194,16 +197,28 @@ export class Machine {
         .finally(() => this.onChange())
     }
     load('host', () => readHost(this.net, this.session))
-    load('limits', () => readLimits(this.net, this.session))
+    load('limits', () => readLimits(this.net, this.session, this.id))
     load('scheduled', () => readScheduled(this.net, this.session))
     if (hasScope(this.session, DIAGNOSTICS_SCOPE)) load('usage', () => readUsage(this.net, this.session))
-    else this.insights = { ...this.insights, usage: { missing: `needs ${DIAGNOSTICS_SCOPE}` } }
+    else if (!only || only.includes('usage')) this.insights = { ...this.insights, usage: { missing: `needs ${DIAGNOSTICS_SCOPE}` } }
+  }
+
+  get canOperateTasks() { return hasScope(this.session, 'orchestration:operate') }
+
+  async runTask(id: string) {
+    await this.guard(() => runTaskNow(this.net, this.session, id))
+    this.refreshInsights(true, ['scheduled'])
+  }
+
+  async setTaskPaused(id: string, paused: boolean) {
+    await this.guard(() => setTaskEnabled(this.net, this.session, id, !paused))
+    this.refreshInsights(true, ['scheduled'])
   }
 
   get canReset() { return hasScope(this.session, PROVIDERS_SCOPE) }
 
-  async resetLimit(instanceId: string) {
-    const result = await this.guard(() => useResetCredit(this.net, this.session, instanceId))
+  async resetLimit(target: ResetTarget) {
+    const result = await this.guard(() => useResetCredit(this.net, this.session, target))
     this.refreshInsights(true)
     return result
   }

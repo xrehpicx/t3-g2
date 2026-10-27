@@ -1,5 +1,5 @@
 import type { Net } from './net'
-import { DEFAULT_SETTINGS, loadSettings, normalizePages, PAGE_PROMPT, saveSettings, threadPageId, type NewThreadSettings, type Page, type ThreadPage } from './settings'
+import { DEFAULT_SETTINGS, loadSettings, normalizePages, pagePrompt, saveSettings, UPDATE_RULE, threadPageId, type NewThreadSettings, type Page, type PageUpdates, type ThreadPage } from './settings'
 import { CANDIDATE_ORIGINS } from './config'
 import { diagnose, type DiagStep } from './t3/diagnose'
 import { exchangePairing, fetchDescriptor, type Descriptor } from './t3/http'
@@ -150,7 +150,7 @@ export class Fleet {
     if (!this.state.defaultMachineId || !this.machines.has(this.state.defaultMachineId)) this.state = { ...this.state, defaultMachineId: DEMO_ID }
     await this.store.set(DEMO_KEY, showcase ? 'showcase' : '1')
     // The demo comes with one page made by a thread, so that feature can be tried without a server.
-    const page = { id: threadPageId(DEMO_ID, DEMO_PAGE_THREAD), machineId: DEMO_ID, threadId: DEMO_PAGE_THREAD, title: 'PRs & deploys' }
+    const page = { id: threadPageId(DEMO_ID, DEMO_PAGE_THREAD), machineId: DEMO_ID, threadId: DEMO_PAGE_THREAD, title: 'PRs & deploys', updates: 'timer' as const }
     const { threadPages, pages } = this.state.settings
     if (!threadPages.some(p => p.id === page.id)) await this.updateSettings({ threadPages: [...threadPages, page], pages: [...pages, page.id] })
     await this.persist()
@@ -217,21 +217,21 @@ export class Fleet {
   }
 
   /** Makes a thread into a glasses page, telling it how to write one. */
-  async adoptPage(machineId: string, threadId: string) {
+  async adoptPage(machineId: string, threadId: string, updates: PageUpdates = 'timer') {
     const machine = this.machines.get(machineId)
     const thread = machine?.thread(threadId)
     if (!machine || !thread) throw new Error('That thread is no longer available.')
-    await machine.sendText(thread, `${PAGE_PROMPT} keep showing what this thread is about.`)
-    await this.addPage({ id: threadPageId(machineId, threadId), machineId, threadId, title: thread.title })
+    await machine.sendText(thread, `${pagePrompt(updates)} keep showing what this thread is about.`)
+    await this.addPage({ id: threadPageId(machineId, threadId), machineId, threadId, title: thread.title, updates })
   }
 
   /** Starts a thread that builds a page from a description. */
-  async makePage(description: string) {
+  async makePage(description: string, updates: PageUpdates = 'timer') {
     const machine = this.defaultMachine
     if (!machine) throw new Error('No T3 machine paired.')
     const title = `Glasses page: ${description.slice(0, 40)}`
-    const threadId = await machine.launch({ settings: this.state.settings, title, text: `${PAGE_PROMPT}\n\n${description}` })
-    await this.addPage({ id: threadPageId(machine.id, threadId), machineId: machine.id, threadId, title: description.slice(0, 24) })
+    const threadId = await machine.launch({ settings: this.state.settings, title, text: `${pagePrompt(updates)}\n\n${description}` })
+    await this.addPage({ id: threadPageId(machine.id, threadId), machineId: machine.id, threadId, title: description.slice(0, 24), updates })
   }
 
   private async addPage(page: ThreadPage) {
@@ -248,6 +248,16 @@ export class Fleet {
       pages: nextPages,
       startPage: nextPages.includes(startPage) ? startPage : nextPages[0],
     })
+  }
+
+  /** Changes how a page keeps itself current, and tells the thread behind it. */
+  async setPageUpdates(id: Page, updates: PageUpdates) {
+    const page = this.state.settings.threadPages.find(p => p.id === id)
+    if (!page || page.updates === updates) return
+    await this.updateSettings({ threadPages: this.state.settings.threadPages.map(p => (p.id === id ? { ...p, updates } : p)) })
+    const machine = this.machines.get(page.machineId)
+    const thread = machine?.thread(page.threadId)
+    if (machine && thread) await machine.sendText(thread, `Change how this page updates. ${UPDATE_RULE[updates]} Replace any earlier schedule or webhook for this page, then reply with the whole page.`).catch(() => undefined)
   }
 
   async renamePage(id: Page, title: string) {

@@ -14,10 +14,12 @@
 3. `3-question.png`: answering an agent's question
 4. `4-multi-select.png`: a multi-select answer
 5. `5-answered.png`: the answer in the thread and the agent's reply
-6. `6-dashboard.png`: the dashboard: what needs you, what is running, machines, spend, limits
-7. `7-usage.png`: usage limits with reset credits, and spend by model
-8. `8-thread-page.png`: a page a thread made and keeps up to date
+6. `6-dashboard.png`: the dashboard: what needs you (with approve or deny), what is running, machines, spend, limits
+7. `7-usage.png`: usage across all your Claude and Codex accounts: how many are free, what resets first
+8. `8-thread-page.png`: a page a thread made, with a chart, kept up to date
 9. `9-chats.png`: every other open chat
+10. `10-usage-accounts.png`: each account's limits and when it comes back
+11. `11-tasks.png`: scheduled tasks, run or pause from the glasses
 
 **Icon (24×24, monochrome):** `assets/icon.png`
 
@@ -25,19 +27,16 @@
 
 Keep your coding agents moving from your glasses.
 
-T3 Code G2 shows the threads you have pinned in T3 Code, live: which agents are working and for how long, what each one is doing right now, and their replies as they stream in. Hold the touchpad to send a voice message, or start a longer hands-free recording from the menu. It steers the running agent, and the agent transcribes your audio on your own machine.
+T3 Code G2 shows your T3 Code threads live: which agents are working, what each is doing right now, and replies as they stream in. Hold the touchpad to send a voice message that steers the running agent; the agent transcribes your audio on your own machine.
 
-- Pages you choose and switch from the glasses menu: Pinned, Chats, a Dashboard, and Usage with plan limits, reset credits and spend by model
-- Make your own pages by talking to a thread: it builds the page and keeps it fresh on a schedule
-- Your other, unpinned chats on their own page; threads that need you or have a new reply float to the top
-- Pinned threads with live status: running with a timer, waiting for you, new reply, done, failed
-- Read a thread with the newest messages at the bottom; scroll back and it stops following until you tap
-- Answer an agent's questions and approve its commands, by tapping an option or saying your answer
-- Start a new thread by voice, with the project, model and permissions you set on your phone
-- Several machines at once, merged into one list
-- Choose what the list shows beside each thread: what it is doing right now, its latest reply, project or machine
-- The time of day in the header (12-hour, 24-hour or hidden), and a compact or comfortable layout
-- Recording pauses instead of being lost when a notification needs a double tap, and a three-second window lets you cancel a voice message before it sends
+- Pages you choose and switch from the glasses menu: Pinned, Chats, a Dashboard, Usage, Scheduled tasks
+- Usage across all your Claude and Codex accounts, even behind a proxy: how many are free, which resets first, what is left, per-account limits, reset credits
+- Dashboard: what needs you (allow or deny an approval from there), what is running, machines, spend, limits
+- Your own pages: tell a thread what to show and it builds the page, charts too, and keeps it fresh
+- Short alerts when a thread needs you, finishes or fails, or a limit runs low; a daily spend budget. All optional
+- Answer questions and approvals by tapping or speaking; quick replies from the menu
+- Start a new thread by voice with the defaults you set on your phone
+- Several machines at once; hands-free recording; cancel a voice message before it sends
 
 T3 Code G2 connects only to T3 Code servers you run yourself (T3 Code is free and open source). Pair it the same way as T3's mobile app: run `t3 auth pairing create` and enter the code. It has no servers, accounts or analytics of its own.
 

@@ -1,6 +1,7 @@
 import type { Net } from '../net'
 import { currentStep, type PendingRequest, type ThreadLive } from './activity'
-import type { Insights, ResetOutcome } from './insights'
+import { sortTasks, type Insights, type ResetOutcome } from './insights'
+import type { LimitAccount } from './limits'
 import type { LaunchInput } from './launch'
 import { Machine, type Glance, type OpenThread } from './machine'
 import type { ServerConfig } from './serverConfig'
@@ -155,6 +156,7 @@ export class DemoMachine extends Machine {
           'CI on main: green · 4m 12s',
           'Last deploy: web 2.4.0-rc2 · 38 min ago · healthy',
           'Next refresh in 9 min',
+          '<svg viewBox="0 0 288 110"><g fill="none" stroke="#fff" stroke-width="3"><polyline points="8,92 52,70 96,78 140,40 184,56 228,22 272,34"/></g><g stroke="#888" stroke-width="1"><line x1="8" y1="100" x2="280" y2="100"/></g></svg>',
         ].join('\n'), 6 * MIN),
       ],
       steps: [],
@@ -197,20 +199,39 @@ export class DemoMachine extends Machine {
   override warm() {}
 
   private demoCredits = 1
-  /** Sample limits, spend and host numbers, so the dashboard and usage pages have something to show. */
+  private demoTaskPaused = false
+  /** Sample limits, spend, host and task numbers, so the dashboard, usage and tasks pages have something to show. */
   override refreshInsights() {
-    const week = new Date(Date.now() + 4 * 86_400_000 + 3 * 3_600_000).toISOString()
-    const session = new Date(Date.now() + 2 * 3_600_000 + 14 * 60_000).toISOString()
+    const at = (ms: number) => new Date(Date.now() + ms).toISOString()
+    const H = 3_600_000, M = 60_000, D = 24 * H
+    const window = (id: string, kind: string, label: string, used: number, resets?: string, mins = kind === 'session' ? 300 : 10080) =>
+      ({ id, kind, label, usedPercent: used, ...(resets ? { resetsAt: resets } : {}), windowDurationMins: mins })
+    const claude = (name: string, session: [number, number?], weekly: [number, number], fable = 0): LimitAccount => ({
+      key: `demo-proxy/${name}`, driver: 'claudeAgent', provider: 'Claude', name: `${name}@example.com`, email: `${name}@example.com`,
+      plan: 'Claude Subscription', source: 'Team proxy', machineId: DEMO_ID, workspaceId: null, credits: 0, reset: null, unavailable: null,
+      windows: [
+        window('five_hour', 'session', 'Session', session[0], session[1] === undefined ? undefined : at(session[1])),
+        window('seven_day', 'weekly', 'Weekly', weekly[0], at(weekly[1])),
+        window('seven_day_fable', 'weekly', 'Weekly · Fable', fable, at(weekly[1])),
+      ],
+    })
+    const codex = (name: string, used: number, credits: number): LimitAccount => ({
+      key: `demo-proxy/codex-${name}`, driver: 'codex', provider: 'Codex', name: `${name}@example.com`, email: `${name}@example.com`,
+      plan: 'ChatGPT Pro', source: 'Team proxy', machineId: DEMO_ID, workspaceId: null, credits, unavailable: null,
+      reset: credits ? { sourceId: 'demo-proxy', accountId: `codex-${name}`, creditId: 'credit-1' } : null,
+      windows: [window('primary', 'weekly', 'Weekly', used, at(4 * D + 3 * H))],
+    })
     const next: Insights = {
       limits: [
-        { instanceId: 'codex', name: 'Codex', credits: this.demoCredits, unavailable: null, windows: [
-          { id: 'primary', kind: 'session', label: '5 hours', usedPercent: this.demoCredits ? 82 : 0, resetsAt: session },
-          { id: 'weekly', kind: 'weekly', label: 'Weekly', usedPercent: 35, resetsAt: week },
-        ] },
-        { instanceId: 'claudeAgent', name: 'Claude', credits: 0, unavailable: null, windows: [
-          { id: 'weekly', kind: 'weekly', label: 'Weekly', usedPercent: 61, resetsAt: week },
-        ] },
-        { instanceId: 'cursor', name: 'Cursor', credits: 0, unavailable: 'unsupported', windows: [] },
+        claude('alex', [0], [100, 3 * H + 12 * M]),
+        claude('blake', [65, 2 * H + 4 * M], [100, 4 * D + H]),
+        claude('casey', [100, 59 * M], [29, 5 * D]),
+        claude('drew', [0], [100, 22 * H]),
+        claude('emery', [54, 2 * H + 40 * M], [51, 6 * D]),
+        claude('finley', [0], [12, 6 * D + 4 * H]),
+        codex('alex', 36, this.demoCredits),
+        codex('blake', 35, 0),
+        { key: 'demo/provider/cursor', driver: 'cursor', provider: 'Cursor', name: 'Cursor', email: null, plan: null, source: null, machineId: DEMO_ID, workspaceId: null, windows: [], credits: 0, reset: null, unavailable: 'unsupported' },
       ],
       usage: {
         today: { costUsd: 42.18, tokens: 18_400_000, cachedShare: 0.94 },
@@ -222,19 +243,29 @@ export class DemoMachine extends Machine {
         ],
       },
       host: { cpu: 0.19, usedMemoryBytes: 26.8e9, totalMemoryBytes: 38.6e9 },
-      scheduled: [{ title: 'Nightly dependency bump', nextRunAt: new Date(Date.now() + 2 * 3_600_000 + 20 * 60_000).toISOString() }],
+      scheduled: sortTasks([
+        { id: 'k1', title: 'Nightly dependency bump', enabled: true, nextRunAt: at(2 * H + 20 * M), lastRunAt: at(-22 * H), lastRunStatus: 'succeeded' },
+        { id: 'k2', title: 'PRs & deploys page', enabled: !this.demoTaskPaused, nextRunAt: this.demoTaskPaused ? null : at(9 * M), lastRunAt: at(-6 * M), lastRunStatus: 'succeeded' },
+        { id: 'k3', title: 'Weekly cost report', enabled: true, nextRunAt: at(3 * D), lastRunAt: at(-4 * D), lastRunStatus: 'failed' },
+      ]),
     }
-    if (JSON.stringify(next.limits) !== JSON.stringify(this.insights.limits) || !this.insights.host) {
+    if (JSON.stringify(next.limits) !== JSON.stringify(this.insights.limits) || JSON.stringify(next.scheduled) !== JSON.stringify(this.insights.scheduled) || !this.insights.host) {
       this.insights = next
       queueMicrotask(() => this.changed())
     }
   }
   override get canReset() { return true }
+  override get canOperateTasks() { return true }
   override async resetLimit(): Promise<{ outcome: ResetOutcome }> {
     if (!this.demoCredits) return { outcome: 'noCredit' }
     this.demoCredits = 0
     this.refreshInsights()
     return { outcome: 'reset' }
+  }
+  override async runTask() { this.refreshInsights() }
+  override async setTaskPaused(id: string, paused: boolean) {
+    if (id === 'k2') this.demoTaskPaused = paused
+    this.refreshInsights()
   }
   override watch() {}
   override glance(id: string): Glance | undefined {
@@ -242,7 +273,7 @@ export class DemoMachine extends Machine {
     if (!t) return undefined
     const live = this.live(t)
     const reply = t.messages.findLast(m => m.role === 'assistant' && m.text.trim())
-    return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null }
+    return { step: currentStep(live)?.label ?? null, reply: reply?.text ?? null, request: live.requests[0] ?? null }
   }
   override config(): Promise<ServerConfig> {
     const model = this.showcase ? 'claude-sonnet-5-5' : 'demo-model'

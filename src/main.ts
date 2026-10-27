@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from './settings'
 import './phone/theme.css'
 import { resolveNet } from './net'
 
@@ -23,9 +24,10 @@ const fleet = new Fleet(net, store, 'T3 Code G2')
 
 createRoot(root).render(createElement(App, { fleet }))
 await fleet.init()
-// #reset forgets every machine and the demo, for development.
+// #reset forgets every machine and the demo, for development. #defaults also puts the settings back.
 if (new URLSearchParams(location.hash.slice(1)).has('reset')) {
   for (const m of fleet.state.machines) await fleet.remove(m.id)
+  if (new URLSearchParams(location.hash.slice(1)).has('defaults')) await fleet.updateSettings({ ...DEFAULT_SETTINGS })
 }
 
 // Dev/QR sideload convenience: #server=…&token=… pairs without typing, then clears the hash.
