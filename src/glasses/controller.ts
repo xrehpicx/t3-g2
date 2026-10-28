@@ -22,7 +22,7 @@ import {
   age, alignRight, BAR_W, chatsHeader, MARK, plainText, chatBar, chatLines, clock, FULL_W, LIST_ROWS, listLayers,
   listHeader, listStart, levelGlyph, markFor, rowsH, rowY, scrollbar, spinner, TEXT_W, THREAD_BODY_ROWS,
   attentionFirst, buildRows, CLOCK_W, formatClock, listDetail, loadedFor, PAGE_SIZE, TITLE_SIDE_W, titleBadge, SEP_KEY, type ListRow,
-  approvalView, choiceLayers, DONE_KEY, questionView, type AnswerView,
+  approvalView, choiceLayers, choiceStart, DONE_KEY, questionView, type AnswerView,
 } from './screens'
 import { freshWarnings, overBudget, snapshotOf, summarize, threadAlerts, type Alert, type SnapMap } from './alerts'
 import { accountKey, approvalDecisions, askKey, dashboardLines, money, pageDots, pageWindow, taskKey, taskLines, todaySpend, usageAccounts, usageLines, type PageLine, type PageMachine } from './pages'
@@ -1029,7 +1029,7 @@ export class GlassesController {
     const visibleRows = ROWS_TOTAL - 1 - first
     const a = this.answer
     a.cursor = Math.max(0, Math.min(view.rows.length - 1, a.cursor))
-    a.top = listStart(view.rows.length, a.cursor, a.top, visibleRows)
+    a.top = choiceStart(view.rows, a.cursor, a.top, visibleRows)
     const { dim, bright } = choiceLayers(view.rows, a.cursor, a.top, visibleRows)
     const side = alignRight(view.side, TITLE_SIDE_W + 60 - 6)
     const hint = this.answerHint()

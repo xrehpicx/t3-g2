@@ -384,17 +384,52 @@ export function approvalView(what: string, detail: string, options: Array<{ deci
   }
 }
 
-/** Choice rows as dim/bright layers (selection by brightness), each kept to one line. */
-export function choiceLayers(rows: ChoiceRow[], cursor: number, start: number, visibleRows: number, widthPx = FULL_W) {
-  const lines = rows.slice(start, start + visibleRows).map(row => {
-    const head = `${row.mark} ${row.label}`
-    if (!row.detail) return fitWidth(head, widthPx - 4)
-    const room = widthPx - 4 - textWidth(head) - textWidth('   ')
-    return room > 40 ? `${head}   ${fitWidth(row.detail, room)}` : fitWidth(head, widthPx - 4)
-  })
-  const selected = cursor - start
-  return {
-    dim: lines.map((line, i) => (i === selected ? '' : line)).join('\n'),
-    bright: lines.map((line, i) => (i === selected ? line : '')).join('\n'),
+/** Description lines shown under an option; the highlighted one may use more. */
+const DESC_LINES = 2
+const DESC_LINES_SELECTED = 4
+
+/** One option as lines: its label, then its description wrapped and indented under the label. */
+function choiceBlock(row: ChoiceRow, selected: boolean, widthPx: number): string[] {
+  const head = fitWidth(`${row.mark} ${row.label}`, widthPx - 4)
+  if (!row.detail) return [head]
+  const indent = ' '.repeat(Math.round(textWidth(`${row.mark} `) / charWidth(' ')))
+  const limit = selected ? DESC_LINES_SELECTED : DESC_LINES
+  const wrapped = wrapWidth(row.detail, widthPx - textWidth(indent) - SAFETY_PX - 6)
+  const shown = wrapped.slice(0, limit)
+  if (wrapped.length > limit) shown[limit - 1] = fitWidth(`${shown[limit - 1]} ${wrapped[limit]}`, widthPx - textWidth(indent) - 4)
+  return [head, ...shown.map(line => indent + line)]
+}
+
+/**
+ * The first row to show so the cursor row is fully visible in `visibleLines` lines, moving the window as
+ * little as possible. Rows are several lines tall when they have a description.
+ */
+export function choiceStart(rows: ChoiceRow[], cursor: number, previous: number, visibleLines: number, widthPx = FULL_W): number {
+  let start = Math.max(0, Math.min(previous, rows.length - 1))
+  if (cursor < start) return cursor
+  const height = (from: number) => {
+    let lines = 0
+    for (let i = from; i <= cursor; i++) lines += choiceBlock(rows[i], i === cursor, widthPx).length
+    return lines
   }
+  while (start < cursor && height(start) > visibleLines) start++
+  return start
+}
+
+/**
+ * Choice rows as dim/bright layers (selection by brightness). Each option is its label with its
+ * description under it; rows that do not fit are left for scrolling.
+ */
+export function choiceLayers(rows: ChoiceRow[], cursor: number, start: number, visibleLines: number, widthPx = FULL_W) {
+  const dim: string[] = []
+  const bright: string[] = []
+  for (let i = start; i < rows.length; i++) {
+    const block = choiceBlock(rows[i], i === cursor, widthPx)
+    if (dim.length + block.length > visibleLines && i > start) break
+    for (const line of block.slice(0, visibleLines - dim.length)) {
+      dim.push(i === cursor ? '' : line)
+      bright.push(i === cursor ? line : '')
+    }
+  }
+  return { dim: dim.join('\n'), bright: bright.join('\n') }
 }

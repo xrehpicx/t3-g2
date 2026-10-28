@@ -160,7 +160,7 @@ describe('live indicators', () => {
 
 import { DEFAULT_VOICE_PROMPT } from '../config'
 import { voiceText } from '../settings'
-import { approvalView, buildRows, choiceLayers, DONE_KEY, loadedFor, PAGE_SIZE, questionView } from './screens'
+import { approvalView, buildRows, choiceLayers, choiceStart, DONE_KEY, loadedFor, PAGE_SIZE, questionView } from './screens'
 
 describe('answer screens', () => {
   const q = { header: 'Library', question: 'Which charting library should we use?', options: [{ label: 'Recharts', description: '98 kB' }, { label: 'Visx' }] }
@@ -185,11 +185,29 @@ describe('answer screens', () => {
     expect(v.head).toBe('★ Run a command?')
     expect(v.rows.map(r => `${r.mark} ${r.label}`)).toEqual(['▶ Allow', '□ Deny'])
   })
-  it('lays choices out one per line, cursor row bright, details only when they fit', () => {
+  it('lays each option out as its label with the description under it, cursor option bright', () => {
     const v = questionView(q, 0, 1, [], false)
-    const { dim, bright } = choiceLayers(v.rows, 1, 0, 5)
-    expect(dim.split('\n')).toEqual(['○ Recharts   98 kB', ''])
-    expect(bright.split('\n')).toEqual(['', '○ Visx'])
+    const { dim, bright } = choiceLayers(v.rows, 1, 0, 6)
+    expect(dim.split('\n')).toEqual(['○ Recharts', '     98 kB', ''])
+    expect(bright.split('\n')).toEqual(['', '', '○ Visx'])
+  })
+  it('wraps a long description instead of cutting it, more for the chosen option', () => {
+    const long = 'Reads the whole repository first, then proposes a plan, waits for your sign-off, and only then edits files, running the tests after every change so a regression is caught early.'
+    const rows = [{ key: 'a', label: 'Careful', detail: long, mark: '○' }, { key: 'b', label: 'Fast', detail: long, mark: '○' }]
+    const lines = (cursor: number) => choiceLayers(rows, cursor, 0, 10)
+    const first = lines(0)
+    expect(first.bright.split('\n').filter(Boolean).length).toBeGreaterThan(3)
+    expect(first.dim.split('\n').filter(Boolean)).toHaveLength(3) // label + 2 lines, the second ending in an ellipsis
+    expect(first.dim).toMatch(/…/)
+    for (const line of [...first.bright.split('\n'), ...first.dim.split('\n')]) expect(textWidth(line)).toBeLessThan(576)
+  })
+  it('scrolls by option so the chosen one is always fully shown', () => {
+    const rows = Array.from({ length: 6 }, (_, i) => ({ key: `k${i}`, label: `Option ${i}`, detail: 'A short note about it', mark: '○' }))
+    expect(choiceStart(rows, 1, 0, 6)).toBe(0)
+    expect(choiceStart(rows, 3, 0, 6)).toBeGreaterThan(0)
+    const start = choiceStart(rows, 5, 0, 6)
+    expect(choiceLayers(rows, 5, start, 6).bright.split('\n').some(l => l.includes('Option 5'))).toBe(true)
+    expect(choiceStart(rows, 0, 4, 6)).toBe(0)
   })
 })
 
