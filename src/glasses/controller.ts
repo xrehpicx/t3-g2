@@ -226,7 +226,9 @@ export class GlassesController {
       if (fresh) this.current = fresh
       return this.scheduleRender()
     }
+    // Answering or composing is not interrupted by the feed changing underneath it.
     if (this.screen === 'compose') return
+    if (this.screen === 'answer') return this.scheduleRender()
     const unreachable = state.machines.length > 0 && state.machines.every(m => m.link !== 'live' && m.error)
     if (unreachable && !state.threads.length) {
       this.screen = 'status'
