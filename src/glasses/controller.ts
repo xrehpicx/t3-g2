@@ -1016,9 +1016,13 @@ export class GlassesController {
   private answerHint(): { text: string; brightness: number } {
     if (this.recorder.busy || this.sending || this.hold || this.notice) return this.statusRow(false)
     const a = this.answer
-    if (!a || a.request.kind === 'approval') return { text: 'tap: choose   ·   double tap: back', brightness: DIM }
+    const view = this.answerView()
+    if (!a || !view) return { text: 'swipe: next · tap: choose · 2x: back', brightness: DIM }
+    // Where you are among the options, so it is clear there are more to swipe to.
+    const where = view.rows.length > 1 ? `${Math.min(a.cursor + 1, view.rows.length)}/${view.rows.length}  ` : ''
+    if (a.request.kind === 'approval') return { text: `${where}swipe: next · tap: choose · 2x: back`, brightness: DIM }
     const q = a.request.questions[a.q]
-    return { text: `${q.multiSelect ? 'tap: tick · Done to continue' : 'tap: choose'}   ·   hold: say it   ·   2x: back`, brightness: DIM }
+    return { text: `${where}swipe: next · tap: ${q.multiSelect ? 'tick · Done to go on' : 'choose'} · hold: say it`, brightness: DIM }
   }
 
   private renderAnswer() {
