@@ -90,3 +90,30 @@ describe('snapshot and trail', () => {
     expect(currentStep(live)?.label).toBe('$ npm test')
   })
 })
+
+describe('request ids in a compact snapshot', () => {
+  it('are looked up in the ids table, so the answer goes to the real request', () => {
+    const ids = ['a', 'b', 'runtime-request:real:1']
+    const live = fromSnapshot({
+      snapshotSequence: 1, ids,
+      projection: { messages: [], visibleTurnItems: [{ item: { id: 'i', type: 'user_input_request', status: 'waiting', requestId: 2, questions: [{ id: 'q', header: 'h', question: 'Which?', options: [] }] } as never }] },
+    })
+    expect(live.requests[0].requestId).toBe('runtime-request:real:1')
+  })
+})
+
+describe('request ids', () => {
+  const question = { id: 'i1', type: 'user_input_request', status: 'pending', questions: [{ id: 'q', header: 'h', question: 'Which?', options: [] }] }
+  it('are strings even when the server sends numbers, because the answering command needs a string', async () => {
+    const { requestFrom } = await import('./activity')
+    const open = requestFrom({ ...question, requestId: 259 } as never)
+    expect(open?.requestId).toBe('259')
+    expect(requestFrom({ ...question, requestId: 'runtime-request:abc' } as never)?.requestId).toBe('runtime-request:abc')
+    expect(requestFrom({ ...question, requestId: 0 } as never)?.requestId).toBe('0')
+  })
+  it('are required, and closed requests are not offered', async () => {
+    const { requestFrom } = await import('./activity')
+    expect(requestFrom({ ...question } as never)).toBeNull()
+    expect(requestFrom({ ...question, requestId: 5, status: 'completed' } as never)).toBeNull()
+  })
+})

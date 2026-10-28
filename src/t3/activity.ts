@@ -17,7 +17,8 @@ export interface TurnItem {
   exitCode?: number
   outputIndicatesFailure?: boolean
   // user_input_request / approval_request
-  requestId?: string
+  /** A string on some servers, a number on others; the commands that answer it take a string. */
+  requestId?: string | number
   questions?: Question[]
   questionAnswer?: unknown
   requestKind?: string
@@ -50,16 +51,17 @@ const OPEN = new Set(['pending', 'waiting', 'running', 'idle'])
 
 /** The request an item represents, if it is still open. */
 export function requestFrom(item: TurnItem): PendingRequest | null {
-  if (!item.requestId || !OPEN.has(item.status)) return null
+  if (item.requestId === undefined || item.requestId === null || item.requestId === '' || !OPEN.has(item.status)) return null
+  const requestId = String(item.requestId)
   if (item.type === 'user_input_request' && item.questions?.length && item.questionAnswer === undefined) {
-    return { kind: 'question', requestId: item.requestId, itemId: item.id, questions: item.questions }
+    return { kind: 'question', requestId, itemId: item.id, questions: item.questions }
   }
   if (item.type === 'approval_request') {
     const what = APPROVAL_WHAT[item.requestKind ?? ''] ?? 'Approval needed'
     const options = item.options?.length
       ? item.options
       : [{ decision: 'accept', label: 'Allow' }, { decision: 'acceptForSession', label: 'Allow for this session' }, { decision: 'decline', label: 'Deny' }]
-    return { kind: 'approval', requestId: item.requestId, itemId: item.id, what, detail: (item.prompt || item.reason || '').trim(), options }
+    return { kind: 'approval', requestId, itemId: item.id, what, detail: (item.prompt || item.reason || '').trim(), options }
   }
   return null
 }
@@ -161,16 +163,28 @@ function upsertMessage(messages: ThreadMessage[], message: ThreadMessage): Threa
   return [...messages, message].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
 }
 
+/**
+ * A snapshot fetched with compact ids refers to ids by position in its `ids` table: a request's
+ * `requestId` is then a number, and the string the server's commands take is `ids[number]`.
+ */
+export function resolveRequestId(item: TurnItem, ids: readonly string[] | undefined): TurnItem {
+  if (typeof item.requestId !== 'number' || !ids) return item
+  const full = ids[item.requestId]
+  return typeof full === 'string' ? { ...item, requestId: full } : item
+}
+
 export function fromSnapshot(snapshot: {
   snapshotSequence: number
+  ids?: string[]
   projection: { messages: ThreadMessage[]; visibleTurnItems?: Array<{ item?: TurnItem }> }
 }): ThreadLive {
   let steps: Step[] = []
   let requests: PendingRequest[] = []
   for (const row of snapshot.projection.visibleTurnItems ?? []) {
     if (!row.item) continue
-    steps = upsertStep(steps, row.item)
-    requests = upsertRequest(requests, row.item)
+    const item = resolveRequestId(row.item, snapshot.ids)
+    steps = upsertStep(steps, item)
+    requests = upsertRequest(requests, item)
   }
   return { sequence: snapshot.snapshotSequence, messages: snapshot.projection.messages, steps, requests }
 }

@@ -54,8 +54,10 @@ export type RequestResponse =
  * Answers a question or approval the agent is waiting on. A spoken answer is attached to its question
  * as a WAV, with a text answer that tells the agent to transcribe it.
  */
-export async function respondToRequest(net: Net, session: Session, threadId: string, requestId: string, response: RequestResponse) {
+export async function respondToRequest(net: Net, session: Session, threadId: string, requestId: string | number, response: RequestResponse) {
   if (!canOperate(session)) throw new ReadOnlyError()
+  // The server's commands take the request id as a string, though its snapshots may carry a number.
+  requestId = String(requestId)
   if ('decision' in response) {
     await rpc(net, session, 'orchestration.dispatchCommand', {
       type: 'runtime-request.respond', commandId: uuid(), threadId, requestId, decision: response.decision,
