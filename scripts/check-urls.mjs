@@ -15,8 +15,8 @@ const hosts = whitelist.map(entry => {
   return { scheme, wild: host?.startsWith('*.'), host: host?.replace(/^\*\./, '') }
 })
 const allowed = url => {
-  const [, scheme, host] = /^(\w+):\/\/([^/:?#]+)/.exec(url) ?? []
-  return hosts.some(h => h.scheme === scheme && (h.wild ? host.endsWith(`.${h.host}`) : host === h.host))
+  const [, scheme, host, hostPort] = /^(\w+):\/\/(([^/:?#]+)(?::\d+)?)/.exec(url)?.slice(0, 3).concat(/^(\w+):\/\/([^/:?#]+(?::\d+)?)/.exec(url)?.[2] ?? '') ?? []
+  return hosts.some(h => h.scheme === scheme && (h.wild ? host.endsWith(`.${h.host}`) : host === h.host || hostPort === h.host))
 }
 // XML namespaces are identifiers, not requests.
 const NAMESPACE = /^https?:\/\/www\.w3\.org\//
@@ -24,7 +24,8 @@ const NAMESPACE = /^https?:\/\/www\.w3\.org\//
 const files = (d) => readdirSync(d).flatMap(f => (statSync(join(d, f)).isDirectory() ? files(join(d, f)) : [join(d, f)]))
 const found = new Map()
 for (const file of files(dir).filter(f => /\.(js|css|html|json|map)$/.test(f) && !f.endsWith('.map'))) {
-  for (const m of readFileSync(file, 'utf8').matchAll(/\b(?:https?|wss?):\/\/[^\s"'`)<>\\]*/g)) {
+  // A list of origins in one string (comma-separated) is several URLs.
+  for (const m of readFileSync(file, 'utf8').matchAll(/\b(?:https?|wss?):\/\/[^\s"'`)<>\\,]*/g)) {
     const url = m[0]
     if (!NAMESPACE.test(url) && !allowed(url)) found.set(url, file)
   }
