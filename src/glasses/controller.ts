@@ -178,6 +178,8 @@ export class GlassesController {
   private tick = 0
   private levels: string[] = []
   private composeModel = ''
+  /** The project the compose screen starts the thread in. Swipe to change it; it is saved as the default project. */
+  private composeProject = SCRATCH
   /** The question or approval being answered, and the answers so far. */
   private answer: {
     request: PendingRequest
@@ -1115,6 +1117,9 @@ export class GlassesController {
     this.screen = 'compose'
     this.clearNotice()
     this.composeModel = ''
+    const projects = this.composeProjects()
+    const saved = this.fleet.state.settings.projectId
+    this.composeProject = projects.some(p => p.id === saved) ? saved : SCRATCH
     await this.renderCompose()
     const machine = this.fleet.defaultMachine
     if (machine && !this.fleet.state.settings.model) {
@@ -1124,15 +1129,33 @@ export class GlassesController {
     }
   }
 
+  /** "No project", then the default machine's projects, as on the phone's Voice tab. */
+  private composeProjects(): Array<{ id: string; title: string }> {
+    return [{ id: SCRATCH, title: 'No project' }, ...(this.fleet.defaultMachine?.projects() ?? [])]
+  }
+
+  /** Swipe on the compose screen: the next or previous project, wrapping around. */
+  private moveComposeProject(step: number) {
+    const projects = this.composeProjects()
+    const at = Math.max(0, projects.findIndex(p => p.id === this.composeProject))
+    this.composeProject = projects[(at + step + projects.length) % projects.length].id
+    void this.renderCompose()
+    // Remember it as the default, so the phone shows it and the next new thread starts here.
+    void this.fleet.updateSettings({ projectId: this.composeProject })
+  }
+
   private renderCompose() {
     const machine = this.fleet.defaultMachine
     const settings = this.fleet.state.settings
-    const project = settings.projectId === SCRATCH ? 'No project' : machine?.projects().find(p => p.id === settings.projectId)?.title ?? 'Project'
+    const projects = this.composeProjects()
+    const at = Math.max(0, projects.findIndex(p => p.id === this.composeProject))
     const model = settings.model || this.composeModel || 'default model'
     const status = this.statusRow(false)
+    const idle = !(this.recorder.busy || this.sending || this.hold || this.notice)
+    const count = projects.length > 1 ? `  ${at + 1}/${projects.length}` : ''
     const body = [
-      `${machine?.record.label ?? '?'}  ·  ${project}`,
-      model,
+      `${machine?.record.label ?? '?'}  ·  ${model}`,
+      `${projects.length > 1 ? '◁ ' : ''}${projects[at].title}${projects.length > 1 ? ' ▷' : ''}${count}`,
       '',
       ...(this.composeKind === 'page'
         ? ['Say what this page should show, and how often', 'it should update. A thread builds it and keeps it fresh.']
@@ -1140,7 +1163,7 @@ export class GlassesController {
     ].map(line => fitWidth(line, FULL_W - 8)).join('\n')
     return this.draw('compose', [
       { slot: 'head', x: 0, y: rowY(0), w: FULL_W, h: rowsH(1), text: this.composeKind === 'page' ? '+ New page' : '+ New thread', brightness: BRIGHT },
-      { slot: 'status', x: 0, y: rowY(1), w: FULL_W, h: rowsH(1), text: this.recorder.busy || this.sending || this.hold || this.notice ? status.text : 'double tap to go back', brightness: this.recorder.busy || this.sending || this.hold || this.notice ? status.brightness : DIM },
+      { slot: 'status', x: 0, y: rowY(1), w: FULL_W, h: rowsH(1), text: idle ? (projects.length > 1 ? 'swipe: project  ·  double tap: back' : 'double tap to go back') : status.text, brightness: idle ? DIM : status.brightness },
       { slot: 'body', x: 0, y: rowY(3), w: FULL_W, h: rowsH(7), text: body, brightness: MID },
     ], this.voiceMenu())
   }
@@ -1350,7 +1373,7 @@ export class GlassesController {
     const forPage = this.composeKind === 'page'
     const title = forPage ? `Glasses page ${stamp}` : `Glasses ${stamp}`
     const threadId = await machine.launch({
-      settings, title, text: forPage ? `${pagePrompt(this.composeUpdates)}\n\n${voiceText(settings)}` : voiceText(settings),
+      settings: { ...settings, projectId: this.composeProject }, title, text: forPage ? `${pagePrompt(this.composeUpdates)}\n\n${voiceText(settings)}` : voiceText(settings),
       attachment: { name: `voice-${Date.now()}.wav`, mimeType: 'audio/wav', bytes: wav },
     })
     if (forPage) {
@@ -1364,7 +1387,7 @@ export class GlassesController {
       this.screen = 'list'
       return this.switchPage(id)
     }
-    const project = settings.projectId === SCRATCH ? '' : machine.projects().find(p => p.id === settings.projectId)?.title ?? ''
+    const project = this.composeProject === SCRATCH ? '' : machine.projects().find(p => p.id === this.composeProject)?.title ?? ''
     // The new thread may not be in the feed yet; open it from what we know and let the stream fill in.
     await this.open(machine.thread(threadId) ?? {
       machineId: machine.id, machineLabel: machine.record.label, id: threadId, title, project,
@@ -1531,6 +1554,7 @@ export class GlassesController {
         this.pageTop = Math.max(0, this.pageTop + (up ? -1 : 1))
         void this.renderList()
       } else if (this.screen === 'list') this.moveCursor(up ? -1 : 1)
+      else if (this.screen === 'compose') { if (!this.recorder.busy && !this.sending) this.moveComposeProject(up ? -1 : 1) }
       else if (this.screen === 'answer' && this.answer) { this.answer.cursor += up ? -1 : 1; void this.renderAnswer() }
       else if (this.screen === 'thread') {
         const total = this.chat().length
