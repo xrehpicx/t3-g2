@@ -1,3 +1,4 @@
+import { isDenyDecision } from './decisions'
 import { charWidth, fitWidth, LINE_PX, SAFETY_PX, textWidth, wrapWidth } from './font'
 import type { ListField } from '../settings'
 import type { Glance } from '../t3/machine'
@@ -380,7 +381,7 @@ export function approvalView(what: string, detail: string, options: Array<{ deci
     head: `${MARK.ask} ${what}`,
     side: '',
     prompt: detail ? wrapWidth(detail, FULL_W - 8).slice(0, 3) : [],
-    rows: options.map(o => ({ key: o.decision, label: o.label, mark: o.decision === 'decline' || o.decision === 'cancel' ? '□' : MARK.run })),
+    rows: options.map(o => ({ key: o.decision, label: o.label, mark: isDenyDecision(o.decision) ? '□' : MARK.run })),
   }
 }
 

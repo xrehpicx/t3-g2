@@ -185,6 +185,14 @@ describe('answer screens', () => {
     expect(v.head).toBe('★ Run a command?')
     expect(v.rows.map(r => `${r.mark} ${r.label}`)).toEqual(['▶ Allow', '□ Deny'])
   })
+  it('mutes reject and cancel too, and leaves a session-wide allow marked as an allow', () => {
+    const v = approvalView('Run a command?', '', [
+      { decision: 'reject', label: 'No' },
+      { decision: 'cancel', label: 'Cancel' },
+      { decision: 'acceptForSession', label: 'Allow for session' },
+    ])
+    expect(v.rows.map(r => `${r.mark} ${r.label}`)).toEqual(['□ No', '□ Cancel', '▶ Allow for session'])
+  })
   it('lays each option out as its label with the description under it, cursor option bright', () => {
     const v = questionView(q, 0, 1, [], false)
     const { dim, bright } = choiceLayers(v.rows, 1, 0, 6)

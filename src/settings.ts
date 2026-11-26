@@ -176,7 +176,7 @@ export const DEFAULT_SETTINGS: NewThreadSettings = {
   projectId: 'scratch',
   instanceId: '',
   model: '',
-  runtimeMode: 'full-access',
+  runtimeMode: 'approval-required',
   voicePrompt: DEFAULT_VOICE_PROMPT,
   sendDelay: DEFAULT_SEND_DELAY,
   density: 'comfortable',

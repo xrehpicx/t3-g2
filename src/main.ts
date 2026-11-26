@@ -1,3 +1,4 @@
+import { readBootHash } from './boot'
 import { DEFAULT_SETTINGS } from './settings'
 import './phone/theme.css'
 import { resolveNet } from './net'
@@ -24,36 +25,25 @@ const fleet = new Fleet(net, store, 'T3 Code G2')
 
 createRoot(root).render(createElement(App, { fleet }))
 await fleet.init()
-// #reset forgets every machine and the demo, for development. #defaults also puts the settings back.
-if (new URLSearchParams(location.hash.slice(1)).has('reset')) {
+// Dev-server only. A packed build ignores the hash, so a link cannot reset or re-pair the phone.
+const boot = readBootHash(location.hash, import.meta.env.DEV)
+if (boot.reset) {
   for (const m of fleet.state.machines) await fleet.remove(m.id)
-  if (new URLSearchParams(location.hash.slice(1)).has('defaults')) await fleet.updateSettings({ ...DEFAULT_SETTINGS })
+  if (boot.defaults) await fleet.updateSettings({ ...DEFAULT_SETTINGS })
 }
-
-// Dev/QR sideload convenience: #server=…&token=… pairs without typing, then clears the hash.
-const hash = new URLSearchParams(location.hash.slice(1))
-const hashServer = hash.get('server')
-const hashToken = hash.get('token')
-if (hashServer && hashToken && !fleet.state.machines.length) {
+if (boot.pair && !fleet.state.machines.length) {
   history.replaceState(null, '', location.pathname)
-  await fleet.pair(hashServer, hashToken).catch(() => {})
+  await fleet.pair(boot.pair.server, boot.pair.token).catch(() => {})
 }
-
-// #demo starts demo mode (for screenshots and trying the app without a server).
-// #showcase is the same with realistic names, for store screenshots.
-if (hash.has('showcase') || (hash.has('demo') && !fleet.demoActive)) {
+if (boot.showcase || (boot.demo && !fleet.demoActive)) {
   history.replaceState(null, '', location.pathname)
-  await fleet.startDemo(hash.has('showcase'))
+  await fleet.startDemo(boot.showcase)
 }
-
-// #page=<page id> opens the glasses on that page (for screenshots): pinned, chats, dashboard, usage, or thread:<machine>:<thread>.
-// #permodel=off hides per-model limits (like Fable), for screenshots.
-if (hash.get('permodel') === 'off') await fleet.updateSettings({ perModelLimits: false })
-const startPage = hash.get('page')
-if (startPage && fleet.state.settings.pages.includes(startPage as never)) await fleet.updateSettings({ startPage: startPage as never })
+if (boot.perModelOff) await fleet.updateSettings({ perModelLimits: false })
+if (boot.startPage && fleet.state.settings.pages.includes(boot.startPage as never)) {
+  await fleet.updateSettings({ startPage: boot.startPage as never })
+}
 
 if (bridge) await new GlassesController(sdk, bridge, fleet, store).start()
 
-// #open=<thread id> does what tapping that thread on the phone page does (for testing the handoff).
-const openId = hash.get('open')
-if (openId && bridge) setTimeout(() => void fleet.openOnGlasses(fleet.defaultMachine?.id ?? '', openId), 1500)
+if (boot.openId && bridge) setTimeout(() => void fleet.openOnGlasses(fleet.defaultMachine?.id ?? '', boot.openId!), 1500)

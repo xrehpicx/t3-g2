@@ -1,4 +1,5 @@
 import type { PendingRequest } from '../t3/activity'
+import { decide } from './decisions'
 import { isMissing, type Insights, type ScheduledTask } from '../t3/insights'
 import { accountOrder, dedupeAccounts, families, isFree, orderedWindows, shortNames, spanText, windowTag, type LimitAccount } from '../t3/limits'
 import { isBusy } from '../t3/pinned'
@@ -172,14 +173,12 @@ export function requestSummary(request: PendingRequest | null | undefined): stri
   return request.questions[0]?.question ?? 'a question'
 }
 
-/** Which of an approval's options allow and which deny, whatever the agent calls them. */
-export function approvalDecisions(request: Extract<PendingRequest, { kind: 'approval' }>): { allow: string; deny: string } {
-  const decisions = request.options.map(o => o.decision)
-  const isDeny = (d: string) => /decline|deny|reject|cancel/i.test(d)
-  return {
-    allow: decisions.includes('accept') ? 'accept' : decisions.find(d => !isDeny(d)) ?? decisions[0] ?? 'accept',
-    deny: decisions.find(d => d === 'decline') ?? decisions.find(isDeny) ?? 'decline',
-  }
+/**
+ * The decision id behind the dashboard's Allow and Deny.
+ * Null when that exact word is not one of the options, so the glasses open the thread instead of guessing.
+ */
+export function approvalDecisions(request: Extract<PendingRequest, { kind: 'approval' }>): { allow: string | null; deny: string | null } {
+  return decide(request.options.map(o => o.decision))
 }
 
 export function dashboardLines({ threads, unread, step, request, budget = 0, actions = false, machines, now }: DashboardInput): PageLine[] {

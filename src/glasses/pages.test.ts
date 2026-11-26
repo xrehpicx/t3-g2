@@ -149,10 +149,14 @@ describe('dashboard actions', () => {
     expect(requestSummary(null)).toBe('')
     expect(requestSummary(approval)).toBe('Run a command? pnpm migrate')
   })
-  it('finds which option allows and which denies, whatever the agent calls them', () => {
+  it('finds which option allows and which denies, when the decision id is an exact known word', () => {
     expect(approvalDecisions(approval)).toEqual({ allow: 'accept', deny: 'decline' })
     expect(approvalDecisions({ ...approval, options: [{ decision: 'approve', label: 'Yes' }, { decision: 'reject', label: 'No' }] })).toEqual({ allow: 'approve', deny: 'reject' })
     expect(approvalDecisions({ ...approval, options: [{ decision: 'cancel', label: 'Cancel' }, { decision: 'proceed', label: 'Go' }] })).toEqual({ allow: 'proceed', deny: 'cancel' })
+  })
+  it('does not treat a session-wide or lookalike id as a one-tap allow or deny', () => {
+    expect(approvalDecisions({ ...approval, options: [{ decision: 'acceptForSession', label: 'Allow for session' }, { decision: 'decline', label: 'Deny' }] })).toEqual({ allow: null, deny: 'decline' })
+    expect(approvalDecisions({ ...approval, options: [{ decision: 'accepted', label: 'Go' }, { decision: 'not_a_decline', label: 'Stop' }] })).toEqual({ allow: null, deny: null })
   })
   it('shows today against the budget on the spend line', () => {
     const line = dashboardLines({ ...input, machines: [machine()], budget: 50 }).find(l => l.text.startsWith('Spend'))!
