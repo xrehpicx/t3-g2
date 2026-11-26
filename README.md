@@ -81,7 +81,7 @@ npm test
 npm run pack           # t3-g2.ehpk with the public manifest
 ```
 
-Open the simulator at `http://localhost:5173/#demo` for sample data, or `#server=<https origin>&token=<pairing code>` to pair in one step.
+Open the simulator at `http://localhost:5173/#demo` for sample data, or `#server=<https origin>&token=<pairing code>` to pair in one step. Those hashes are read only by `npm run dev`. A packed build ignores them.
 
 **Your own machines.** The Even app only lets the app reach origins listed in `app.json`'s network whitelist (exact origins). The committed manifest allows `https://*.ts.net`. To add your own addresses, and have the phone page offer them as "found nearby", list them in `.env.personal.local` (git-ignored):
 

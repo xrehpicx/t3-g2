@@ -604,13 +604,17 @@ export class GlassesController {
     const selected = this.chosenKey(lines)
     const asking = selected ? input.threads.find(t => askKey(t) === selected) : undefined
     const request = asking ? input.request(asking) : null
-    const status = this.armed?.kind === 'allow' && asking
-      ? { text: `tap again to allow · swipe: cancel · menu: deny`, brightness: BRIGHT }
+    const decisions = request?.kind === 'approval' ? approvalDecisions(request) : null
+    const status = this.armed?.kind === 'allow' && asking && decisions?.allow
+      ? { text: `tap again to allow · swipe: cancel${decisions.deny ? ' · menu: deny' : ''}`, brightness: BRIGHT }
       : this.notice ? this.pageNotice('')
-      : asking ? this.pageNotice(request?.kind === 'approval' ? 'tap twice: allow · menu: deny' : 'tap: open and answer')
+      : asking ? this.pageNotice(decisions?.allow ? `tap twice: allow${decisions.deny ? ' · menu: deny' : ''}` : 'tap: open and answer')
       : this.pageNotice('tap+hold: pages')
     // The summary ("★ 2 need you ▶ 1 running") is the header; the page needs no title.
-    const actions: Array<[number, string]> = request?.kind === 'approval' ? [[MENU_ALLOW, 'Allow'], [MENU_DENY, 'Deny']] : []
+    const actions: Array<[number, string]> = [
+      ...(decisions?.allow ? [[MENU_ALLOW, 'Allow'] as [number, string]] : []),
+      ...(decisions?.deny ? [[MENU_DENY, 'Deny'] as [number, string]] : []),
+    ]
     return this.drawPage('dashboard', summary.text, lines, selected, status, [...this.alertMenu(), ...actions, ...this.pageMenu(), [MENU_REFRESH, 'Refresh']])
   }
 
@@ -628,7 +632,7 @@ export class GlassesController {
     const asked = this.askedThread()
     if (!asked) return
     const { thread, key, request, machine } = asked
-    if (request?.kind !== 'approval') return void this.open(thread)
+    if (request?.kind !== 'approval' || !approvalDecisions(request).allow) return void this.open(thread)
     if (this.armed?.kind !== 'allow' || this.armed.key !== key) { this.armed = { kind: 'allow', key }; return void this.renderDashboard() }
     this.armed = null
     await this.answerApproval(thread, request, machine, 'allow')
@@ -644,9 +648,10 @@ export class GlassesController {
 
   private async answerApproval(thread: PinnedThread, request: Extract<PendingRequest, { kind: 'approval' }>, machine: Machine | undefined, which: 'allow' | 'deny') {
     if (!machine) return
-    const decisions = approvalDecisions(request)
+    const decision = approvalDecisions(request)[which]
+    if (!decision) return
     try {
-      await machine.respond(thread.id, request.requestId, { decision: decisions[which] })
+      await machine.respond(thread.id, request.requestId, { decision })
       await this.showNotice(`${which === 'allow' ? '● allowed' : '■ denied'}: ${thread.title}`, 4000)
     } catch (error) {
       await this.showNotice(error, 6000)

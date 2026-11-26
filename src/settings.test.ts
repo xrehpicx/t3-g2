@@ -18,6 +18,11 @@ describe('voiceText', () => {
 })
 
 describe('settings', () => {
+  it('asks before every action on a new install, and keeps a saved full-access choice', () => {
+    expect(DEFAULT_SETTINGS.runtimeMode).toBe('approval-required')
+    expect(normalizeSettings({}).runtimeMode).toBe('approval-required')
+    expect(normalizeSettings({ runtimeMode: 'full-access' }).runtimeMode).toBe('full-access')
+  })
   it('falls back to defaults for missing or junk input', () => {
     expect(normalizeSettings(undefined)).toEqual(DEFAULT_SETTINGS)
     expect(normalizeSettings('nope')).toEqual(DEFAULT_SETTINGS)

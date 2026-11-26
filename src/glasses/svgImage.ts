@@ -16,9 +16,21 @@ export function extractSvg(reply: string): { text: string; svg: string | null } 
   return { text: (reply.slice(0, bare.index) + reply.slice(bare.index + bare[0].length)).replace(/\n{3,}/g, '\n\n').trim(), svg }
 }
 
-/** Anything that could run or fetch something: the image is drawn from the page's own text only. */
+/** Drawing tags a chart needs. Anything else, including the tags that fetch or run code, is rejected. */
+const DRAWING_TAGS = new Set(['svg', 'g', 'defs', 'title', 'desc', 'line', 'polyline', 'polygon', 'rect', 'circle', 'ellipse', 'path', 'text', 'tspan', 'lineargradient', 'radialgradient', 'stop'])
+
+/**
+ * The picture is drawn with an image element, which does not run script. This still refuses a tag
+ * outside the drawing set, an event handler (including `<svg/onload`), an entity, or a URL that is
+ * not a fragment, so a chart cannot fetch another host.
+ */
 export function safeSvg(svg: string): boolean {
-  return !/<script|<foreignObject|<image|<iframe|<use[\s>]|\son\w+\s*=|(?:href|src)\s*=\s*["']?(?!#)|url\(\s*["']?(?!#)|@import/i.test(svg)
+  const tags = [...svg.matchAll(/<\/?\s*([a-zA-Z][\w:.-]*)/g)]
+  if (!tags.length) return false
+  for (const [, name] of tags) {
+    if (!DRAWING_TAGS.has(name.toLowerCase().replace(/^.*:/, ''))) return false
+  }
+  return !/&|\/on[a-z]+\s*=|\son[a-z]+\s*=|javascript:|(?:href|src)\s*=\s*["']?(?!#)|url\(\s*["']?(?!#)|@import/i.test(svg)
 }
 
 /** The size to draw at: as wide as fits, keeping the SVG's proportions. */

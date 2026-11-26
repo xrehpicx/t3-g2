@@ -72,8 +72,20 @@ export async function mintSocketTicket(net: Net, session: Session): Promise<stri
   return (await json<{ ticket: string }>(response)).ticket
 }
 
+/**
+ * The upload target has to be a path on the paired origin. String-joining the origin and a
+ * server-supplied URL would let `@other-host` send the recording somewhere else.
+ */
+export function uploadUrl(origin: string, relativeUrl: string): string {
+  const base = new URL(origin)
+  const pathOnly = relativeUrl.startsWith('/') && !relativeUrl.startsWith('//') && !/[\s\\@]/.test(relativeUrl) && !relativeUrl.includes('://')
+  const target = pathOnly ? new URL(relativeUrl, base) : null
+  if (!target || target.origin !== base.origin) throw new Error('Audio upload was rejected.')
+  return target.toString()
+}
+
 export async function uploadAttachment(net: Net, session: Session, relativeUrl: string, bytes: Uint8Array): Promise<void> {
-  const response = await net.fetch(`${session.origin}${relativeUrl}`, { method: 'POST', body: bytes as BodyInit })
+  const response = await net.fetch(uploadUrl(session.origin, relativeUrl), { method: 'POST', body: bytes as BodyInit })
   if (!response.ok) throw new Error(`Audio upload failed (${response.status}).`)
 }
 

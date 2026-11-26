@@ -23,6 +23,12 @@ describe('inline SVG in a reply', () => {
     ]) expect(safeSvg(bad)).toBe(false)
     expect(safeSvg('<svg><use href="#a"/><defs><linearGradient id="a"/></defs><rect fill="url(#a)"/></svg>')).toBe(false) // <use> is out entirely
     expect(safeSvg('<svg><defs><linearGradient id="a"/></defs><rect fill="url(#a)"/></svg>')).toBe(true)
+    for (const bad of [
+      '<svg/onload="x()"></svg>',
+      '<svg><animate attributeName="href" to="https://x"/></svg>',
+      '<svg><set attributeName="href" to="https://x"/></svg>',
+      '<svg><rect fill="url(&#35;a)"/></svg>',
+    ]) expect(safeSvg(bad)).toBe(false)
   })
   it('sizes the picture to the glasses: at most 288 x 144, keeping proportions', () => {
     expect(imageSize('<svg viewBox="0 0 288 120">')).toEqual({ w: 288, h: 120 })
